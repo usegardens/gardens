@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import {
   listDmThreads as dcListDmThreads,
   createDmThread as dcCreateDmThread,
-  subscribeDmTopic,
   type DmThread,
 } from '../ffi/deltaCore';
 
@@ -22,9 +21,9 @@ export const useDMStore = create<DMState>((set, get) => ({
   },
 
   async createThread(recipientKey: string) {
-    const threadId = await dcCreateDmThread(recipientKey);
+    const result = await dcCreateDmThread(recipientKey);
     await get().fetchThreads();
-    try { await subscribeDmTopic(threadId); } catch { /* non-fatal */ }
-    return threadId;
+
+    return result.id;
   },
 }));

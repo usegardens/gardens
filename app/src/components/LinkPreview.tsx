@@ -129,7 +129,13 @@ export function LinkPreview({ url }: Props) {
     );
   }
 
-  if (!data) return null;
+  // Show a basic link card even if no OG data (so the link isn't invisible)
+  const hostname = new URL(url).hostname;
+  // If siteName is just a subdomain prefix like "www", use full hostname
+  const siteName = data?.siteName && !['www', 'm', 'mobile'].includes(data.siteName.toLowerCase())
+    ? data.siteName
+    : hostname;
+  const displayData = data ? { ...data, siteName } : { siteName: hostname };
 
   return (
     <TouchableOpacity
@@ -140,39 +146,39 @@ export function LinkPreview({ url }: Props) {
       <View style={styles.accent} />
       <View style={styles.body}>
         {/* Site name row with favicon */}
-        {data.siteName && (
+        {displayData.siteName && (
           <View style={styles.siteRow}>
-            {data.favicon ? (
+            {displayData.favicon ? (
               <Image
-                source={{ uri: data.favicon }}
+                source={{ uri: displayData.favicon }}
                 style={styles.favicon}
                 onError={() => {}}
               />
             ) : null}
             <Text style={styles.siteName} numberOfLines={1}>
-              {data.siteName}
+              {displayData.siteName}
             </Text>
           </View>
         )}
 
         {/* Title */}
-        {data.title ? (
+        {displayData.title ? (
           <Text style={styles.title} numberOfLines={2}>
-            {data.title}
+            {displayData.title}
           </Text>
         ) : null}
 
         {/* Description */}
-        {data.description ? (
+        {displayData.description ? (
           <Text style={styles.description} numberOfLines={3}>
-            {data.description}
+            {displayData.description}
           </Text>
         ) : null}
 
         {/* Preview image */}
-        {data.image ? (
+        {displayData.image ? (
           <Image
-            source={{ uri: data.image }}
+            source={{ uri: displayData.image }}
             style={styles.previewImage}
             resizeMode="cover"
             onError={() => {}}
@@ -190,7 +196,9 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 6,
     overflow: 'hidden',
-    maxWidth: '100%',
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'flex-start',
   },
   skeleton: {
     flexDirection: 'row',
@@ -198,6 +206,9 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 6,
     overflow: 'hidden',
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'flex-start',
   },
   accent: {
     width: 4,

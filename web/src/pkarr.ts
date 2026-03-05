@@ -9,8 +9,8 @@
 import z32 from 'z32';
 import dns from 'dns-packet';
 
-// Public pkarr relay
-const PKARR_RELAY = 'https://relay.pkarr.org';
+// Public pkarr relay - must match where mobile app publishes
+const PKARR_RELAY = 'https://pkarr.pubky.org';
 
 export interface ResolvedRecord {
   recordType: 'user' | 'org' | 'relay' | 'none';
@@ -87,13 +87,23 @@ async function fetchFromRelay(z32Key: string): Promise<dns.Packet | null> {
  * @param z32Key - z32-encoded public key (without 'pk:' prefix)
  */
 export async function resolvePkarr(z32Key: string): Promise<ResolvedRecord | null> {
+  console.log(`[pkarr] Resolving key: ${z32Key}`);
   try {
     const packet = await fetchFromRelay(z32Key);
-    if (!packet) return null;
+    if (!packet) {
+      console.log(`[pkarr] No packet found for key: ${z32Key}`);
+      return null;
+    }
+    console.log(`[pkarr] Packet resolved, answers: ${packet.answers?.length || 0}`);
+    
+    // Debug: log all answers
+    for (const answer of packet.answers || []) {
+      console.log(`[pkarr] Answer: type=${answer.type}, name=${answer.name}`);
+    }
 
     // Look for _delta TXT records
     for (const answer of packet.answers || []) {
-      if (answer.type === 'TXT' && answer.name === '_delta') {
+      if (answer.type === 'TXT' && (answer.name === '_delta' || answer.name?.startsWith('_delta.'))) {
         const txtData = (answer as dns.TxtAnswer).data;
         const chunks = Array.isArray(txtData) ? txtData : [txtData];
         if (chunks.length > 0) {
@@ -107,7 +117,7 @@ export async function resolvePkarr(z32Key: string): Promise<ResolvedRecord | nul
 
     // Also check for relay records at _delta-relay
     for (const answer of packet.answers || []) {
-      if (answer.type === 'TXT' && answer.name === '_delta-relay') {
+      if (answer.type === 'TXT' && (answer.name === '_delta-relay' || answer.name?.startsWith('_delta-relay.'))) {
         const txtData = (answer as dns.TxtAnswer).data;
         const chunks = Array.isArray(txtData) ? txtData : [txtData];
         if (chunks.length > 0) {

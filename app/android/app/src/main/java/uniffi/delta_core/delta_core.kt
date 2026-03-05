@@ -354,7 +354,7 @@ private fun findLibraryName(componentName: String): String {
     if (libOverride != null) {
         return libOverride
     }
-    return "uniffi_delta_core"
+    return "delta_core"
 }
 
 // Define FFI callback types
@@ -635,9 +635,13 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_delta_core_checksum_func_accept_org_transfer(
+    ): Short
     external fun uniffi_delta_core_checksum_func_add_member_direct(
     ): Short
     external fun uniffi_delta_core_checksum_func_archive_room(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_ban_member(
     ): Short
     external fun uniffi_delta_core_checksum_func_build_onion_packet(
     ): Short
@@ -651,6 +655,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_delta_core_checksum_func_create_room(
     ): Short
+    external fun uniffi_delta_core_checksum_func_delete_message(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_delete_org(
+    ): Short
     external fun uniffi_delta_core_checksum_func_delete_room(
     ): Short
     external fun uniffi_delta_core_checksum_func_generate_invite_token(
@@ -663,13 +671,35 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_delta_core_checksum_func_get_my_profile(
     ): Short
+    external fun uniffi_delta_core_checksum_func_get_node_id(
+    ): Short
     external fun uniffi_delta_core_checksum_func_get_pkarr_url(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_get_pkarr_url_from_z32(
     ): Short
     external fun uniffi_delta_core_checksum_func_get_profile(
     ): Short
+    external fun uniffi_delta_core_checksum_func_get_relay_hops(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_get_sync_url(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_get_topic_seq_ffi(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_has_blob(
+    ): Short
     external fun uniffi_delta_core_checksum_func_import_from_mnemonic(
     ): Short
+    external fun uniffi_delta_core_checksum_func_ingest_op_ffi(
+    ): Short
     external fun uniffi_delta_core_checksum_func_init_core(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_init_network(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_init_sync(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_is_network_initialized(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_kick_member(
     ): Short
     external fun uniffi_delta_core_checksum_func_list_dm_threads(
     ): Short
@@ -681,9 +711,17 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_delta_core_checksum_func_list_rooms(
     ): Short
+    external fun uniffi_delta_core_checksum_func_mute_member(
+    ): Short
     external fun uniffi_delta_core_checksum_func_peel_onion_layer(
     ): Short
+    external fun uniffi_delta_core_checksum_func_provide_blob_to_peer(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_receive_onion_packet(
+    ): Short
     external fun uniffi_delta_core_checksum_func_remove_member_from_org(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_request_blob_from_peer(
     ): Short
     external fun uniffi_delta_core_checksum_func_resolve_pkarr(
     ): Short
@@ -691,11 +729,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_delta_core_checksum_func_send_message(
     ): Short
-    external fun uniffi_delta_core_checksum_func_subscribe_dm_topic(
+    external fun uniffi_delta_core_checksum_func_send_onion_packet(
     ): Short
-    external fun uniffi_delta_core_checksum_func_subscribe_room_topic(
+    external fun uniffi_delta_core_checksum_func_transfer_org_ownership(
     ): Short
     external fun uniffi_delta_core_checksum_func_unarchive_room(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_unban_member(
+    ): Short
+    external fun uniffi_delta_core_checksum_func_unmute_member(
     ): Short
     external fun uniffi_delta_core_checksum_func_update_org(
     ): Short
@@ -718,11 +760,15 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "delta_core"))
         
     }
-    external fun uniffi_delta_core_fn_func_add_member_direct(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`accessLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_delta_core_fn_func_accept_org_transfer(`orgId`: RustBuffer.ByValue,`transferPayloadBase64`: RustBuffer.ByValue,`previousOwnerPubkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_add_member_direct(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`accessLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_delta_core_fn_func_archive_room(`orgId`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
-external fun uniffi_delta_core_fn_func_build_onion_packet(`hops`: RustBuffer.ByValue,`topicId`: RustBuffer.ByValue,`op`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+external fun uniffi_delta_core_fn_func_ban_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_build_onion_packet(`hops`: RustBuffer.ByValue,`topicId`: RustBuffer.ByValue,`op`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_change_member_permission(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`newAccessLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -734,25 +780,51 @@ external fun uniffi_delta_core_fn_func_create_org(`name`: RustBuffer.ByValue,`ty
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_create_room(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_delete_message(`messageId`: RustBuffer.ByValue,`orgId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_delete_org(`orgId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_delta_core_fn_func_delete_room(`orgId`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_delta_core_fn_func_generate_invite_token(`orgId`: RustBuffer.ByValue,`accessLevel`: RustBuffer.ByValue,`expiryTimestamp`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_generate_keypair(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_delta_core_fn_func_get_blob(`blobHash`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_delta_core_fn_func_get_blob(`blobHash`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_get_connection_status(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_get_my_profile(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_get_node_id(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_get_pkarr_url(`publicKeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_get_pkarr_url_from_z32(`z32Key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_get_profile(`publicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_get_relay_hops(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_get_sync_url(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_get_topic_seq_ffi(`topicHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun uniffi_delta_core_fn_func_has_blob(`blobHash`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 external fun uniffi_delta_core_fn_func_import_from_mnemonic(`words`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_delta_core_fn_func_init_core(`privateKeyHex`: RustBuffer.ByValue,`dbDir`: RustBuffer.ByValue,`bootstrapNodes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_delta_core_fn_func_ingest_op_ffi(`topicHex`: RustBuffer.ByValue,`seq`: Long,`opBytes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_init_core(`privateKeyHex`: RustBuffer.ByValue,`dbDir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_init_network(`relayUrl`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_init_sync(`hops`: RustBuffer.ByValue,`syncUrl`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_is_network_initialized(uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun uniffi_delta_core_fn_func_kick_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_delta_core_fn_func_list_dm_threads(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -764,21 +836,33 @@ external fun uniffi_delta_core_fn_func_list_org_members(`orgId`: RustBuffer.ByVa
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_list_rooms(`orgId`: RustBuffer.ByValue,`includeArchived`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_mute_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`durationSeconds`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 external fun uniffi_delta_core_fn_func_peel_onion_layer(`packet`: RustBuffer.ByValue,`recipientSeedHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_delta_core_fn_func_provide_blob_to_peer(`blobHash`: RustBuffer.ByValue,`peerPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_receive_onion_packet(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_remove_member_from_org(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_delta_core_fn_func_request_blob_from_peer(`blobHash`: RustBuffer.ByValue,`peerPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_resolve_pkarr(`z32Key`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_search_public_orgs(`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_send_message(`roomId`: RustBuffer.ByValue,`dmThreadId`: RustBuffer.ByValue,`contentType`: RustBuffer.ByValue,`textContent`: RustBuffer.ByValue,`blobId`: RustBuffer.ByValue,`embedUrl`: RustBuffer.ByValue,`mentions`: RustBuffer.ByValue,`replyTo`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_delta_core_fn_func_subscribe_dm_topic(`threadId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_delta_core_fn_func_send_onion_packet(`nextHop`: RustBuffer.ByValue,`encryptedPayload`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
-external fun uniffi_delta_core_fn_func_subscribe_room_topic(`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+external fun uniffi_delta_core_fn_func_transfer_org_ownership(`orgId`: RustBuffer.ByValue,`newOwnerPubkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_delta_core_fn_func_unarchive_room(`orgId`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_unban_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun uniffi_delta_core_fn_func_unmute_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_delta_core_fn_func_update_org(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`typeLabel`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`avatarBlobId`: RustBuffer.ByValue,`coverBlobId`: RustBuffer.ByValue,`isPublic`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
@@ -907,19 +991,25 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_delta_core_checksum_func_accept_org_transfer() != 42910.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_add_member_direct() != 34864.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_archive_room() != 29231.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_build_onion_packet() != 34319.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_ban_member() != 19983.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_build_onion_packet() != 44175.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_change_member_permission() != 32951.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_create_dm_thread() != 46942.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_create_dm_thread() != 35584.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_create_or_update_profile() != 11028.toShort()) {
@@ -931,6 +1021,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_delta_core_checksum_func_create_room() != 29275.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_delta_core_checksum_func_delete_message() != 38923.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_delete_org() != 38253.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_delete_room() != 15489.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -940,7 +1036,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_delta_core_checksum_func_generate_keypair() != 12056.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_get_blob() != 43830.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_get_blob() != 2682.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_get_connection_status() != 51082.toShort()) {
@@ -949,16 +1045,49 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_delta_core_checksum_func_get_my_profile() != 8700.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_delta_core_checksum_func_get_node_id() != 55703.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_get_pkarr_url() != 32831.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_get_pkarr_url_from_z32() != 2995.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_get_profile() != 38381.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_delta_core_checksum_func_get_relay_hops() != 18874.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_get_sync_url() != 49266.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_get_topic_seq_ffi() != 30523.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_has_blob() != 13659.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_import_from_mnemonic() != 39159.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_init_core() != 940.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_ingest_op_ffi() != 15320.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_init_core() != 41171.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_init_network() != 53867.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_init_sync() != 59645.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_is_network_initialized() != 44366.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_kick_member() != 47870.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_list_dm_threads() != 7752.toShort()) {
@@ -976,10 +1105,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_delta_core_checksum_func_list_rooms() != 43757.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_delta_core_checksum_func_mute_member() != 9236.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_peel_onion_layer() != 43462.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_delta_core_checksum_func_provide_blob_to_peer() != 7533.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_receive_onion_packet() != 18165.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_delta_core_checksum_func_remove_member_from_org() != 50049.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_request_blob_from_peer() != 46331.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_resolve_pkarr() != 64999.toShort()) {
@@ -988,16 +1129,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_delta_core_checksum_func_search_public_orgs() != 3657.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_send_message() != 63610.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_send_message() != 40169.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_subscribe_dm_topic() != 1578.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_send_onion_packet() != 58989.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_delta_core_checksum_func_subscribe_room_topic() != 4845.toShort()) {
+    if (lib.uniffi_delta_core_checksum_func_transfer_org_ownership() != 41814.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_unarchive_room() != 49702.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_unban_member() != 18968.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_delta_core_checksum_func_unmute_member() != 11214.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_delta_core_checksum_func_update_org() != 770.toShort()) {
@@ -1270,44 +1417,6 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
     override fun write(value: ByteArray, buf: ByteBuffer) {
         buf.putInt(value.size)
         buf.put(value)
-    }
-}
-
-
-
-data class BootstrapNode (
-    var `nodeIdHex`: kotlin.String
-    , 
-    var `relayUrl`: kotlin.String
-    
-){
-    
-
-    
-
-    
-    companion object
-}
-
-/**
- * @suppress
- */
-public object FfiConverterTypeBootstrapNode: FfiConverterRustBuffer<BootstrapNode> {
-    override fun read(buf: ByteBuffer): BootstrapNode {
-        return BootstrapNode(
-            FfiConverterString.read(buf),
-            FfiConverterString.read(buf),
-        )
-    }
-
-    override fun allocationSize(value: BootstrapNode) = (
-            FfiConverterString.allocationSize(value.`nodeIdHex`) +
-            FfiConverterString.allocationSize(value.`relayUrl`)
-    )
-
-    override fun write(value: BootstrapNode, buf: ByteBuffer) {
-            FfiConverterString.write(value.`nodeIdHex`, buf)
-            FfiConverterString.write(value.`relayUrl`, buf)
     }
 }
 
@@ -1631,6 +1740,44 @@ public object FfiConverterTypeOnionHopFfi: FfiConverterRustBuffer<OnionHopFfi> {
 
 
 
+data class OnionPacket (
+    var `payload`: kotlin.ByteArray
+    , 
+    var `fromNodeId`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOnionPacket: FfiConverterRustBuffer<OnionPacket> {
+    override fun read(buf: ByteBuffer): OnionPacket {
+        return OnionPacket(
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: OnionPacket) = (
+            FfiConverterByteArray.allocationSize(value.`payload`) +
+            FfiConverterString.allocationSize(value.`fromNodeId`)
+    )
+
+    override fun write(value: OnionPacket, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`payload`, buf)
+            FfiConverterString.write(value.`fromNodeId`, buf)
+    }
+}
+
+
+
 data class OnionPeeled (
     var `peelType`: kotlin.String
     , 
@@ -1639,9 +1786,9 @@ data class OnionPeeled (
     var `innerPacket`: kotlin.ByteArray?
     , 
     var `topicId`: kotlin.ByteArray?
-    ,
+    , 
     var `op`: kotlin.ByteArray?
-
+    
 ){
     
 
@@ -1701,6 +1848,8 @@ data class OrgSummary (
     , 
     var `creatorKey`: kotlin.String
     , 
+    var `orgPubkey`: kotlin.String?
+    , 
     var `createdAt`: kotlin.Long
     
 ){
@@ -1726,6 +1875,7 @@ public object FfiConverterTypeOrgSummary: FfiConverterRustBuffer<OrgSummary> {
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
             FfiConverterLong.read(buf),
         )
     }
@@ -1739,6 +1889,7 @@ public object FfiConverterTypeOrgSummary: FfiConverterRustBuffer<OrgSummary> {
             FfiConverterOptionalString.allocationSize(value.`coverBlobId`) +
             FfiConverterBoolean.allocationSize(value.`isPublic`) +
             FfiConverterString.allocationSize(value.`creatorKey`) +
+            FfiConverterOptionalString.allocationSize(value.`orgPubkey`) +
             FfiConverterLong.allocationSize(value.`createdAt`)
     )
 
@@ -1751,6 +1902,7 @@ public object FfiConverterTypeOrgSummary: FfiConverterRustBuffer<OrgSummary> {
             FfiConverterOptionalString.write(value.`coverBlobId`, buf)
             FfiConverterBoolean.write(value.`isPublic`, buf)
             FfiConverterString.write(value.`creatorKey`, buf)
+            FfiConverterOptionalString.write(value.`orgPubkey`, buf)
             FfiConverterLong.write(value.`createdAt`, buf)
     }
 }
@@ -1961,6 +2113,86 @@ public object FfiConverterTypeRoom: FfiConverterRustBuffer<Room> {
 
 
 
+/**
+ * Returned by send_message and create_dm_thread.
+ * op_bytes is the GossipEnvelope CBOR — the app forwards it via onion routing.
+ */
+data class SendResult (
+    var `id`: kotlin.String
+    , 
+    var `opBytes`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSendResult: FfiConverterRustBuffer<SendResult> {
+    override fun read(buf: ByteBuffer): SendResult {
+        return SendResult(
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SendResult) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterByteArray.allocationSize(value.`opBytes`)
+    )
+
+    override fun write(value: SendResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterByteArray.write(value.`opBytes`, buf)
+    }
+}
+
+
+
+data class SyncHopFfi (
+    var `pubkeyHex`: kotlin.String
+    , 
+    var `nextUrl`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSyncHopFfi: FfiConverterRustBuffer<SyncHopFfi> {
+    override fun read(buf: ByteBuffer): SyncHopFfi {
+        return SyncHopFfi(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SyncHopFfi) = (
+            FfiConverterString.allocationSize(value.`pubkeyHex`) +
+            FfiConverterString.allocationSize(value.`nextUrl`)
+    )
+
+    override fun write(value: SyncHopFfi, buf: ByteBuffer) {
+            FfiConverterString.write(value.`pubkeyHex`, buf)
+            FfiConverterString.write(value.`nextUrl`, buf)
+    }
+}
+
+
+
 
 
 sealed class AuthException(message: String): kotlin.Exception(message) {
@@ -2030,11 +2262,17 @@ sealed class BlobException(message: String): kotlin.Exception(message) {
         
         class NotInitialized(message: String) : BlobException(message)
         
+        class NetworkNotInitialized(message: String) : BlobException(message)
+        
         class NotFound(message: String) : BlobException(message)
         
         class StoreException(message: String) : BlobException(message)
         
         class IoException(message: String) : BlobException(message)
+        
+        class EncryptionException(message: String) : BlobException(message)
+        
+        class ConnectionFailed(message: String) : BlobException(message)
         
 
     companion object ErrorHandler : UniffiRustCallStatusErrorHandler<BlobException> {
@@ -2050,9 +2288,12 @@ public object FfiConverterTypeBlobError : FfiConverterRustBuffer<BlobException> 
         
             return when(buf.getInt()) {
             1 -> BlobException.NotInitialized(FfiConverterString.read(buf))
-            2 -> BlobException.NotFound(FfiConverterString.read(buf))
-            3 -> BlobException.StoreException(FfiConverterString.read(buf))
-            4 -> BlobException.IoException(FfiConverterString.read(buf))
+            2 -> BlobException.NetworkNotInitialized(FfiConverterString.read(buf))
+            3 -> BlobException.NotFound(FfiConverterString.read(buf))
+            4 -> BlobException.StoreException(FfiConverterString.read(buf))
+            5 -> BlobException.IoException(FfiConverterString.read(buf))
+            6 -> BlobException.EncryptionException(FfiConverterString.read(buf))
+            7 -> BlobException.ConnectionFailed(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
         
@@ -2068,16 +2309,28 @@ public object FfiConverterTypeBlobError : FfiConverterRustBuffer<BlobException> 
                 buf.putInt(1)
                 Unit
             }
-            is BlobException.NotFound -> {
+            is BlobException.NetworkNotInitialized -> {
                 buf.putInt(2)
                 Unit
             }
-            is BlobException.StoreException -> {
+            is BlobException.NotFound -> {
                 buf.putInt(3)
                 Unit
             }
-            is BlobException.IoException -> {
+            is BlobException.StoreException -> {
                 buf.putInt(4)
+                Unit
+            }
+            is BlobException.IoException -> {
+                buf.putInt(5)
+                Unit
+            }
+            is BlobException.EncryptionException -> {
+                buf.putInt(6)
+                Unit
+            }
+            is BlobException.ConnectionFailed -> {
+                buf.putInt(7)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2243,6 +2496,76 @@ public object FfiConverterTypeKeyError : FfiConverterRustBuffer<KeyException> {
 
 
 
+sealed class NetworkException(message: String): kotlin.Exception(message) {
+        
+        class NotInitialized(message: String) : NetworkException(message)
+        
+        class ConnectionFailed(message: String) : NetworkException(message)
+        
+        class ProtocolException(message: String) : NetworkException(message)
+        
+        class StreamException(message: String) : NetworkException(message)
+        
+        class IoException(message: String) : NetworkException(message)
+        
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<NetworkException> {
+        override fun lift(error_buf: RustBuffer.ByValue): NetworkException = FfiConverterTypeNetworkError.lift(error_buf)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeNetworkError : FfiConverterRustBuffer<NetworkException> {
+    override fun read(buf: ByteBuffer): NetworkException {
+        
+            return when(buf.getInt()) {
+            1 -> NetworkException.NotInitialized(FfiConverterString.read(buf))
+            2 -> NetworkException.ConnectionFailed(FfiConverterString.read(buf))
+            3 -> NetworkException.ProtocolException(FfiConverterString.read(buf))
+            4 -> NetworkException.StreamException(FfiConverterString.read(buf))
+            5 -> NetworkException.IoException(FfiConverterString.read(buf))
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+        
+    }
+
+    override fun allocationSize(value: NetworkException): ULong {
+        return 4UL
+    }
+
+    override fun write(value: NetworkException, buf: ByteBuffer) {
+        when(value) {
+            is NetworkException.NotInitialized -> {
+                buf.putInt(1)
+                Unit
+            }
+            is NetworkException.ConnectionFailed -> {
+                buf.putInt(2)
+                Unit
+            }
+            is NetworkException.ProtocolException -> {
+                buf.putInt(3)
+                Unit
+            }
+            is NetworkException.StreamException -> {
+                buf.putInt(4)
+                Unit
+            }
+            is NetworkException.IoException -> {
+                buf.putInt(5)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+
 sealed class OnionException(message: String): kotlin.Exception(message) {
         
         class EmptyRoute(message: String) : OnionException(message)
@@ -2316,6 +2639,48 @@ public object FfiConverterTypeOnionError : FfiConverterRustBuffer<OnionException
             }
             is OnionException.InvalidKey -> {
                 buf.putInt(7)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
+}
+
+
+
+
+
+sealed class SyncFfiException(message: String): kotlin.Exception(message) {
+        
+        class Exception(message: String) : SyncFfiException(message)
+        
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<SyncFfiException> {
+        override fun lift(error_buf: RustBuffer.ByValue): SyncFfiException = FfiConverterTypeSyncFfiError.lift(error_buf)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSyncFfiError : FfiConverterRustBuffer<SyncFfiException> {
+    override fun read(buf: ByteBuffer): SyncFfiException {
+        
+            return when(buf.getInt()) {
+            1 -> SyncFfiException.Exception(FfiConverterString.read(buf))
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+        
+    }
+
+    override fun allocationSize(value: SyncFfiException): ULong {
+        return 4UL
+    }
+
+    override fun write(value: SyncFfiException, buf: ByteBuffer) {
+        when(value) {
+            is SyncFfiException.Exception -> {
+                buf.putInt(1)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2457,6 +2822,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeOnionPacket: FfiConverterRustBuffer<OnionPacket?> {
+    override fun read(buf: ByteBuffer): OnionPacket? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeOnionPacket.read(buf)
+    }
+
+    override fun allocationSize(value: OnionPacket?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeOnionPacket.allocationSize(value)
+        }
+    }
+
+    override fun write(value: OnionPacket?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeOnionPacket.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypePkarrResolved: FfiConverterRustBuffer<PkarrResolved?> {
     override fun read(buf: ByteBuffer): PkarrResolved? {
         if (buf.get().toInt() == 0) {
@@ -2539,34 +2936,6 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
-        }
-    }
-}
-
-
-
-
-/**
- * @suppress
- */
-public object FfiConverterSequenceTypeBootstrapNode: FfiConverterRustBuffer<List<BootstrapNode>> {
-    override fun read(buf: ByteBuffer): List<BootstrapNode> {
-        val len = buf.getInt()
-        return List<BootstrapNode>(len) {
-            FfiConverterTypeBootstrapNode.read(buf)
-        }
-    }
-
-    override fun allocationSize(value: List<BootstrapNode>): ULong {
-        val sizeForLength = 4UL
-        val sizeForItems = value.map { FfiConverterTypeBootstrapNode.allocationSize(it) }.sum()
-        return sizeForLength + sizeForItems
-    }
-
-    override fun write(value: List<BootstrapNode>, buf: ByteBuffer) {
-        buf.putInt(value.size)
-        value.iterator().forEach {
-            FfiConverterTypeBootstrapNode.write(it, buf)
         }
     }
 }
@@ -2738,6 +3107,48 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<SyncHopFfi>> {
+    override fun read(buf: ByteBuffer): List<SyncHopFfi> {
+        val len = buf.getInt()
+        return List<SyncHopFfi>(len) {
+            FfiConverterTypeSyncHopFfi.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SyncHopFfi>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSyncHopFfi.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SyncHopFfi>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSyncHopFfi.write(it, buf)
+        }
+    }
+}
+        /**
+         * Accept org ownership transfer.
+         * Decrypts the transferred key and stores it encrypted with the new owner's key.
+         */
+    @Throws(AuthException::class) fun `acceptOrgTransfer`(`orgId`: kotlin.String, `transferPayloadBase64`: kotlin.String, `previousOwnerPubkeyHex`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_accept_org_transfer(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`transferPayloadBase64`),FfiConverterString.lower(`previousOwnerPubkeyHex`),_status)
+}
+    
+    
+
     @Throws(AuthException::class) fun `addMemberDirect`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String, `accessLevel`: kotlin.String)
         = 
     uniffiRustCallWithError(AuthException) { _status ->
@@ -2758,11 +3169,21 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     
     
 
+    @Throws(AuthException::class) fun `banMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_ban_member(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
+}
+    
+    
+
     @Throws(OnionException::class) fun `buildOnionPacket`(`hops`: List<OnionHopFfi>, `topicId`: kotlin.ByteArray, `op`: kotlin.ByteArray): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     uniffiRustCallWithError(OnionException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_build_onion_packet(
-
+    
         FfiConverterSequenceTypeOnionHopFfi.lower(`hops`),FfiConverterByteArray.lower(`topicId`),FfiConverterByteArray.lower(`op`),_status)
 }
     )
@@ -2779,8 +3200,8 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     
     
 
-    @Throws(CoreException::class) fun `createDmThread`(`recipientKey`: kotlin.String): kotlin.String {
-            return FfiConverterString.lift(
+    @Throws(CoreException::class) fun `createDmThread`(`recipientKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(CoreException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_create_dm_thread(
     
@@ -2822,6 +3243,31 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
+        /**
+         * Delete a message. The user can delete their own messages, or
+         * any message if they have Manage permission in the org.
+         */
+    @Throws(CoreException::class) fun `deleteMessage`(`messageId`: kotlin.String, `orgId`: kotlin.String?): SendResult {
+            return FfiConverterTypeSendResult.lift(
+    uniffiRustCallWithError(CoreException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_delete_message(
+    
+        FfiConverterString.lower(`messageId`),FfiConverterOptionalString.lower(`orgId`),_status)
+}
+    )
+    }
+    
+
+    @Throws(CoreException::class) fun `deleteOrg`(`orgId`: kotlin.String)
+        = 
+    uniffiRustCallWithError(CoreException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_delete_org(
+    
+        FfiConverterString.lower(`orgId`),_status)
+}
+    
+    
+
     @Throws(CoreException::class) fun `deleteRoom`(`orgId`: kotlin.String, `roomId`: kotlin.String)
         = 
     uniffiRustCallWithError(CoreException) { _status ->
@@ -2853,12 +3299,12 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
-    @Throws(BlobException::class) fun `getBlob`(`blobHash`: kotlin.String): kotlin.ByteArray {
+    @Throws(BlobException::class) fun `getBlob`(`blobHash`: kotlin.String, `roomId`: kotlin.String?): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     uniffiRustCallWithError(BlobException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_get_blob(
     
-        FfiConverterString.lower(`blobHash`),_status)
+        FfiConverterString.lower(`blobHash`),FfiConverterOptionalString.lower(`roomId`),_status)
 }
     )
     }
@@ -2884,6 +3330,20 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
+        /**
+         * Get the current node's Iroh node ID.
+         */
+    @Throws(NetworkException::class) fun `getNodeId`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(NetworkException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_get_node_id(
+    
+        _status)
+}
+    )
+    }
+    
+
     @Throws(CoreException::class) fun `getPkarrUrl`(`publicKeyHex`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCallWithError(CoreException) { _status ->
@@ -2894,12 +3354,73 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     )
     }
     
+
+        /**
+         * Get pkarr URL from a z32-encoded public key (for orgs).
+         * Input: z32-encoded key (e.g., "yj4bqhvahk8dge...")
+         * Returns: `pk:<z32-encoded-pubkey>`
+         */
+    @Throws(CoreException::class) fun `getPkarrUrlFromZ32`(`z32Key`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(CoreException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_get_pkarr_url_from_z32(
+    
+        FfiConverterString.lower(`z32Key`),_status)
+}
+    )
+    }
+    
  fun `getProfile`(`publicKey`: kotlin.String): Profile? {
             return FfiConverterOptionalTypeProfile.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_delta_core_fn_func_get_profile(
     
         FfiConverterString.lower(`publicKey`),_status)
+}
+    )
+    }
+    
+ fun `getRelayHops`(): List<SyncHopFfi> {
+            return FfiConverterSequenceTypeSyncHopFfi.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_get_relay_hops(
+    
+        _status)
+}
+    )
+    }
+    
+ fun `getSyncUrl`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_get_sync_url(
+    
+        _status)
+}
+    )
+    }
+    
+
+    @Throws(SyncFfiException::class) fun `getTopicSeqFfi`(`topicHex`: kotlin.String): kotlin.Long {
+            return FfiConverterLong.lift(
+    uniffiRustCallWithError(SyncFfiException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_get_topic_seq_ffi(
+    
+        FfiConverterString.lower(`topicHex`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Check if we have a blob locally (for P2P availability checks).
+         */
+    @Throws(BlobException::class) fun `hasBlob`(`blobHash`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCallWithError(BlobException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_has_blob(
+    
+        FfiConverterString.lower(`blobHash`),_status)
 }
     )
     }
@@ -2916,12 +3437,69 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
-    @Throws(CoreException::class) fun `initCore`(`privateKeyHex`: kotlin.String, `dbDir`: kotlin.String, `bootstrapNodes`: List<BootstrapNode>)
+    @Throws(SyncFfiException::class) fun `ingestOpFfi`(`topicHex`: kotlin.String, `seq`: kotlin.Long, `opBytes`: kotlin.ByteArray)
+        = 
+    uniffiRustCallWithError(SyncFfiException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_ingest_op_ffi(
+    
+        FfiConverterString.lower(`topicHex`),FfiConverterLong.lower(`seq`),FfiConverterByteArray.lower(`opBytes`),_status)
+}
+    
+    
+
+    @Throws(CoreException::class) fun `initCore`(`privateKeyHex`: kotlin.String, `dbDir`: kotlin.String)
         = 
     uniffiRustCallWithError(CoreException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_init_core(
     
-        FfiConverterString.lower(`privateKeyHex`),FfiConverterString.lower(`dbDir`),FfiConverterSequenceTypeBootstrapNode.lower(`bootstrapNodes`),_status)
+        FfiConverterString.lower(`privateKeyHex`),FfiConverterString.lower(`dbDir`),_status)
+}
+    
+    
+
+        /**
+         * Initialize the Iroh P2P network stack. Must be called after init_core().
+         * Returns the node ID as a string.
+         */
+    @Throws(NetworkException::class) fun `initNetwork`(`relayUrl`: kotlin.String?): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(NetworkException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_init_network(
+    
+        FfiConverterOptionalString.lower(`relayUrl`),_status)
+}
+    )
+    }
+    
+ fun `initSync`(`hops`: List<SyncHopFfi>, `syncUrl`: kotlin.String)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_init_sync(
+    
+        FfiConverterSequenceTypeSyncHopFfi.lower(`hops`),FfiConverterString.lower(`syncUrl`),_status)
+}
+    
+    
+
+        /**
+         * Check if the network is initialized.
+         */ fun `isNetworkInitialized`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_is_network_initialized(
+    
+        _status)
+}
+    )
+    }
+    
+
+    @Throws(AuthException::class) fun `kickMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_kick_member(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
     
     
@@ -2976,12 +3554,48 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
+    @Throws(AuthException::class) fun `muteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String, `durationSeconds`: kotlin.Long)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_mute_member(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),FfiConverterLong.lower(`durationSeconds`),_status)
+}
+    
+    
+
     @Throws(OnionException::class) fun `peelOnionLayer`(`packet`: kotlin.ByteArray, `recipientSeedHex`: kotlin.String): OnionPeeled {
             return FfiConverterTypeOnionPeeled.lift(
     uniffiRustCallWithError(OnionException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_peel_onion_layer(
     
         FfiConverterByteArray.lower(`packet`),FfiConverterString.lower(`recipientSeedHex`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Provide (send) a blob to a peer who requested it via P2P.
+         */
+    @Throws(BlobException::class) fun `provideBlobToPeer`(`blobHash`: kotlin.String, `peerPublicKey`: kotlin.String)
+        = 
+    uniffiRustCallWithError(BlobException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_provide_blob_to_peer(
+    
+        FfiConverterString.lower(`blobHash`),FfiConverterString.lower(`peerPublicKey`),_status)
+}
+    
+    
+
+        /**
+         * Receive the next available onion packet (non-blocking check).
+         */ fun `receiveOnionPacket`(): OnionPacket? {
+            return FfiConverterOptionalTypeOnionPacket.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_receive_onion_packet(
+    
+        _status)
 }
     )
     }
@@ -2995,6 +3609,21 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
     
+    
+
+        /**
+         * Request a blob from a peer via P2P onion routing.
+         * Returns the blob bytes if successful, or null if timeout/peer doesn't have it.
+         */
+    @Throws(BlobException::class) fun `requestBlobFromPeer`(`blobHash`: kotlin.String, `peerPublicKey`: kotlin.String): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    uniffiRustCallWithError(BlobException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_request_blob_from_peer(
+    
+        FfiConverterString.lower(`blobHash`),FfiConverterString.lower(`peerPublicKey`),_status)
+}
+    )
+    }
     
 
     @Throws(CoreException::class) fun `resolvePkarr`(`z32Key`: kotlin.String): PkarrResolved? {
@@ -3018,8 +3647,8 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
-    @Throws(CoreException::class) fun `sendMessage`(`roomId`: kotlin.String?, `dmThreadId`: kotlin.String?, `contentType`: kotlin.String, `textContent`: kotlin.String?, `blobId`: kotlin.String?, `embedUrl`: kotlin.String?, `mentions`: List<kotlin.String>, `replyTo`: kotlin.String?): kotlin.String {
-            return FfiConverterString.lift(
+    @Throws(CoreException::class) fun `sendMessage`(`roomId`: kotlin.String?, `dmThreadId`: kotlin.String?, `contentType`: kotlin.String, `textContent`: kotlin.String?, `blobId`: kotlin.String?, `embedUrl`: kotlin.String?, `mentions`: List<kotlin.String>, `replyTo`: kotlin.String?): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(CoreException) { _status ->
     UniffiLib.uniffi_delta_core_fn_func_send_message(
     
@@ -3029,24 +3658,32 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     }
     
 
-    @Throws(CoreException::class) fun `subscribeDmTopic`(`threadId`: kotlin.String)
+        /**
+         * Send an onion-routed packet to the next hop.
+         */
+    @Throws(NetworkException::class) fun `sendOnionPacket`(`nextHop`: kotlin.String, `encryptedPayload`: kotlin.ByteArray)
         = 
-    uniffiRustCallWithError(CoreException) { _status ->
-    UniffiLib.uniffi_delta_core_fn_func_subscribe_dm_topic(
+    uniffiRustCallWithError(NetworkException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_send_onion_packet(
     
-        FfiConverterString.lower(`threadId`),_status)
+        FfiConverterString.lower(`nextHop`),FfiConverterByteArray.lower(`encryptedPayload`),_status)
 }
     
     
 
-    @Throws(CoreException::class) fun `subscribeRoomTopic`(`roomId`: kotlin.String)
-        = 
-    uniffiRustCallWithError(CoreException) { _status ->
-    UniffiLib.uniffi_delta_core_fn_func_subscribe_room_topic(
+        /**
+         * Transfer org ownership to a new owner.
+         * Returns base64-encoded encrypted payload that the new owner must pass to accept_org_transfer.
+         */
+    @Throws(AuthException::class) fun `transferOrgOwnership`(`orgId`: kotlin.String, `newOwnerPubkeyHex`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_transfer_org_ownership(
     
-        FfiConverterString.lower(`roomId`),_status)
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`newOwnerPubkeyHex`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(CoreException::class) fun `unarchiveRoom`(`orgId`: kotlin.String, `roomId`: kotlin.String)
@@ -3055,6 +3692,26 @@ public object FfiConverterSequenceTypeRoom: FfiConverterRustBuffer<List<Room>> {
     UniffiLib.uniffi_delta_core_fn_func_unarchive_room(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`roomId`),_status)
+}
+    
+    
+
+    @Throws(AuthException::class) fun `unbanMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_unban_member(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
+}
+    
+    
+
+    @Throws(AuthException::class) fun `unmuteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_delta_core_fn_func_unmute_member(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
     
     

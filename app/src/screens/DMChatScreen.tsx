@@ -9,6 +9,7 @@ import {
   Text,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { MessageBubble } from '../components/MessageBubble';
 import { MessageComposer } from '../components/MessageComposer';
 import { useMessagesStore } from '../stores/useMessagesStore';
@@ -18,7 +19,7 @@ type Props = NativeStackScreenProps<any, 'DMChat'>;
 
 export function DMChatScreen({ route }: Props) {
   const { threadId, recipientKey } = route.params as { threadId: string; recipientKey: string };
-  const { messages, fetchMessages, sendMessage } = useMessagesStore();
+  const { messages, fetchMessages, sendMessage, deleteMessage } = useMessagesStore();
   const { myProfile } = useProfileStore();
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
@@ -31,6 +32,13 @@ export function DMChatScreen({ route }: Props) {
     loadMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMessages();
+      return () => {};
+    }, [threadId]),
+  );
 
   async function loadMessages() {
     setLoading(true);
@@ -98,17 +106,43 @@ export function DMChatScreen({ route }: Props) {
     setReplyingTo(messageId);
   }
 
-  function handleLongPress(messageId: string) {
-    Alert.alert(
-      'Message Actions',
-      'Choose an action',
-      [
-        { text: 'Reply', onPress: () => handleReply(messageId) },
-        { text: 'Copy', onPress: () => Alert.alert('Coming Soon', 'Copy functionality') },
-        { text: 'Delete', onPress: () => Alert.alert('Coming Soon', 'Delete functionality'), style: 'destructive' },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+  function handleLongPress(message: typeof messageList[0]) {
+    const canDelete = message.authorKey === myProfile?.publicKey && !message.isDeleted;
+
+    const actions: Array<{ text: string; onPress?: () => void; style?: 'cancel' | 'default' | 'destructive' }> = [
+      { text: 'Reply', onPress: () => handleReply(message.messageId) },
+    ];
+
+    if (canDelete) {
+      actions.push({
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Delete Message',
+            'Are you sure you want to delete this message?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await deleteMessage(message.messageId);
+                  } catch (err: any) {
+                    Alert.alert('Error', err.message || 'Failed to delete message');
+                  }
+                },
+              },
+            ]
+          );
+        },
+      });
+    }
+
+    actions.push({ text: 'Cancel', style: 'cancel' });
+
+    Alert.alert('Message Actions', 'Choose an action', actions);
   }
 
   if (loading) {
@@ -144,7 +178,7 @@ export function DMChatScreen({ route }: Props) {
               message={item}
               isOwnMessage={item.authorKey === myProfile?.publicKey}
               onReply={() => handleReply(item.messageId)}
-              onLongPress={() => handleLongPress(item.messageId)}
+              onLongPress={() => handleLongPress(item)}
             />
           )}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}

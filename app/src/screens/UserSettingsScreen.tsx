@@ -9,25 +9,26 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { SheetManager } from 'react-native-actions-sheet';
 import { PublicIdentityCard } from '../components/PublicIdentityCard';
-import { useProfileStore } from '../stores/useProfileStore';
+import { useProfileStore, type Profile } from '../stores/useProfileStore';
 import { createOrUpdateProfile, getMyProfile, getPkarrUrl } from '../ffi/deltaCore';
 
 function SettingsRow({
   label,
   description,
-  soon,
+  value,
   onPress,
 }: {
   label: string;
   description?: string;
-  soon?: boolean;
+  value?: string;
   onPress?: () => void;
 }) {
   return (
     <TouchableOpacity
       style={s.row}
-      disabled={soon || !onPress}
+      disabled={!onPress}
       onPress={onPress}
       activeOpacity={0.7}
     >
@@ -35,13 +36,10 @@ function SettingsRow({
         <Text style={s.rowLabel}>{label}</Text>
         {description && <Text style={s.rowDesc}>{description}</Text>}
       </View>
-      {soon ? (
-        <View style={s.soonBadge}>
-          <Text style={s.soonText}>Soon</Text>
-        </View>
-      ) : (
-        <Text style={s.chevron}>›</Text>
-      )}
+      <View style={s.rowRight}>
+        {value && <Text style={s.rowValue}>{value}</Text>}
+        {onPress && <Text style={s.chevron}>›</Text>}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -87,7 +85,7 @@ function ToggleRow({
 
 export function UserSettingsScreen() {
   const { fetchMyProfile, localUsername } = useProfileStore();
-  const [profile, setProfile] = useState<import('../stores/useProfileStore').Profile | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [isPublic, setIsPublic] = useState(false);
   const [pkarrUrl, setPkarrUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,6 +149,61 @@ export function UserSettingsScreen() {
     }
   }
 
+  const openEditProfile = () => {
+    try {
+      console.log('[UserSettings] Opening edit-profile-sheet...');
+      console.log('[UserSettings] SheetManager:', SheetManager);
+      console.log('[UserSettings] SheetManager.show:', (SheetManager as any).show);
+      (SheetManager as any).show('edit-profile-sheet');
+    } catch (err) {
+      console.error('[UserSettings] Error opening edit-profile-sheet:', err);
+      Alert.alert('Error', `Failed to open: ${err.message}`);
+    }
+  };
+
+  const openEditAvailableFor = () => {
+    try {
+      (SheetManager as any).show('edit-available-for-sheet');
+    } catch (err: any) {
+      console.error('[UserSettings] Error opening edit-available-for-sheet:', err);
+      Alert.alert('Error', `Failed to open: ${err.message}`);
+    }
+  };
+
+  const openBackupSeed = () => {
+    try {
+      (SheetManager as any).show('backup-seed-sheet');
+    } catch (err: any) {
+      console.error('[UserSettings] Error opening backup-seed-sheet:', err);
+      Alert.alert('Error', `Failed to open: ${err.message}`);
+    }
+  };
+
+  const openExportData = () => {
+    try {
+      (SheetManager as any).show('export-data-sheet');
+    } catch (err: any) {
+      console.error('[UserSettings] Error opening export-data-sheet:', err);
+      Alert.alert('Error', `Failed to open: ${err.message}`);
+    }
+  };
+
+  const openDeleteAccount = () => {
+    try {
+      (SheetManager as any).show('delete-account-sheet');
+    } catch (err: any) {
+      console.error('[UserSettings] Error opening delete-account-sheet:', err);
+      Alert.alert('Error', `Failed to open: ${err.message}`);
+    }
+  };
+
+  // Get current values for display
+  const displayName = profile?.username || localUsername || 'Not set';
+  const bio = profile?.bio || 'Not set';
+  const availableFor = profile?.availableFor?.length
+    ? `${profile.availableFor.length} tags`
+    : 'Not set';
+
   if (loading) {
     return (
       <View style={[s.root, s.center]}>
@@ -162,15 +215,36 @@ export function UserSettingsScreen() {
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
       <Section title="Profile">
-        <SettingsRow label="Display Name" soon />
-        <SettingsRow label="Bio" description="Tell people about yourself" soon />
-        <SettingsRow label="Profile Picture" soon />
-        <SettingsRow label="Cover Photo" soon />
+        <SettingsRow 
+          label="Display Name" 
+          value={displayName}
+          onPress={openEditProfile}
+        />
+        <SettingsRow 
+          label="Bio" 
+          description={bio === 'Not set' ? 'Tell people about yourself' : bio}
+          value={bio !== 'Not set' ? undefined : undefined}
+          onPress={openEditProfile}
+        />
+        <SettingsRow 
+          label="Profile Picture" 
+          value="Change"
+          onPress={openEditProfile}
+        />
+        <SettingsRow 
+          label="Cover Photo" 
+          value="Change"
+          onPress={openEditProfile}
+        />
       </Section>
 
       <Section title="Privacy">
-        <SettingsRow label="Visibility" description="Who can find you" soon />
-        <SettingsRow label="Available For" description="What you're open to" soon />
+        <SettingsRow
+          label="Available For"
+          description="What you're open to"
+          value={availableFor}
+          onPress={openEditAvailableFor}
+        />
       </Section>
 
       <Section title="Public Profile">
@@ -200,17 +274,27 @@ export function UserSettingsScreen() {
       </Section>
 
       <Section title="Security">
-        <SettingsRow label="Backup Seed Phrase" soon />
-        <SettingsRow label="Biometric Lock" soon />
+        <SettingsRow 
+          label="Backup Seed Phrase" 
+          description="View your recovery phrase"
+          onPress={openBackupSeed}
+        />
+        <SettingsRow 
+          label="Biometric Lock" 
+          description="Require biometric authentication"
+          value="Enabled"
+        />
       </Section>
 
       <Section title="Account">
-        <SettingsRow label="Export Data" soon />
-        <TouchableOpacity style={s.dangerRow} disabled>
+        <SettingsRow 
+          label="Export Data" 
+          description="Download your data"
+          onPress={openExportData}
+        />
+        <TouchableOpacity style={s.dangerRow} onPress={openDeleteAccount}>
           <Text style={s.dangerLabel}>Delete Account</Text>
-          <View style={s.soonBadge}>
-            <Text style={s.soonText}>Soon</Text>
-          </View>
+          <Text style={s.chevron}>›</Text>
         </TouchableOpacity>
       </Section>
     </ScrollView>
@@ -249,16 +333,16 @@ const s = StyleSheet.create({
   rowContent: { flex: 1 },
   rowLabel: { color: '#fff', fontSize: 15 },
   rowDesc: { color: '#555', fontSize: 12, marginTop: 2 },
-  chevron: { color: '#444', fontSize: 20, marginLeft: 8 },
-
-  soonBadge: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    marginLeft: 8,
+  rowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  soonText: { color: '#555', fontSize: 11, fontWeight: '600' },
+  rowValue: {
+    color: '#888',
+    fontSize: 14,
+  },
+  chevron: { color: '#444', fontSize: 20, marginLeft: 8 },
 
   savingRow: {
     flexDirection: 'row',

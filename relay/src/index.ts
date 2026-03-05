@@ -7,7 +7,7 @@
  *
  * Secrets (set via `wrangler secret put`):
  *   RELAY_SEED_HEX   64 hex char Ed25519 seed
- *   IROH_BRIDGE_URL  URL of the iroh delivery bridge
+ *   SELF_URL         Base URL of this Worker without trailing slash (e.g. https://relay.delta.app)
  */
 
 import { ed25519 } from '@noble/curves/ed25519';

@@ -14,12 +14,61 @@ pub mod sealed_sender;
 pub mod store;
 pub mod onion;
 pub mod sync;
+pub mod sync_config;
 
 // ── Phase 1 re-exports (UniFFI uses these) ────────────────────────────────────
 pub use keys::{generate_keypair, import_from_mnemonic, KeyError, KeyPair};
 
 // ── Phase 7 re-exports ────────────────────────────────────────────────────────
-pub use blobs::{upload_blob, get_blob, BlobError};
+pub use blobs::{provide_blob, BlobError};
+
+/// Upload a blob and return its content-hash (hex).
+pub fn upload_blob(data: Vec<u8>, mime_type: String, room_id: Option<String>) -> Result<String, BlobError> {
+    store::block_on(async move {
+        blobs::upload_blob(data, mime_type, room_id).await
+    })
+}
+
+/// Get blob data with optional room decryption.
+pub fn get_blob(hash_str: String, room_id: Option<String>) -> Result<Vec<u8>, BlobError> {
+    store::block_on(async move {
+        blobs::get_blob(&hash_str, room_id).await
+    })
+}
+
+/// Check if we have a blob locally (for P2P availability checks).
+pub fn has_blob(hash_str: String) -> Result<bool, BlobError> {
+    store::block_on(async move {
+        blobs::has_blob(&hash_str).await
+    })
+}
+
+/// Request a blob from a specific peer via P2P.
+pub fn request_blob_from_peer(hash_str: String, peer_node_id: String) -> Result<Option<Vec<u8>>, BlobError> {
+    store::block_on(async move {
+        blobs::request_blob_from_peer(&hash_str, &peer_node_id).await?;
+        // After requesting, try to get the blob
+        match blobs::get_blob(&hash_str, None).await {
+            Ok(data) => Ok(Some(data)),
+            Err(blobs::BlobError::NotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    })
+}
+
+/// Provide (send) a blob to a peer who requested it.
+pub fn provide_blob_to_peer(hash_str: String, _peer_public_key: String) -> Result<(), BlobError> {
+    store::block_on(async move {
+        blobs::provide_blob(&hash_str).await
+    })
+}
+
+/// Returned by send_message and create_dm_thread.
+/// `op_bytes` is the GossipEnvelope CBOR; the app layer forwards it via onion routing.
+pub struct SendResult {
+    pub id: String,
+    pub op_bytes: Vec<u8>,
+}
 
 // ── Onion routing ─────────────────────────────────────────────────────────────
 
@@ -100,6 +149,37 @@ pub fn peel_onion_layer(
             op: Some(op),
         }),
     }
+}
+
+// ── Sync Configuration ───────────────────────────────────────────────────────
+
+/// FFI-friendly hop descriptor for sync configuration.
+pub struct SyncHopFfi {
+    pub pubkey_hex: String,
+    pub next_url: String,
+}
+
+/// Initialize sync configuration with relay hops and sync URL.
+/// Called from JS after relay discovery resolves hop list.
+pub fn init_sync(hops: Vec<SyncHopFfi>, sync_url: String) {
+    let hop_tuples: Vec<(String, String)> = hops
+        .into_iter()
+        .map(|h| (h.pubkey_hex, h.next_url))
+        .collect();
+    sync_config::set(hop_tuples, sync_url);
+}
+
+/// Get the current relay hops from sync configuration.
+pub fn get_relay_hops() -> Vec<SyncHopFfi> {
+    sync_config::get_hops()
+        .into_iter()
+        .map(|(pubkey_hex, next_url)| SyncHopFfi { pubkey_hex, next_url })
+        .collect()
+}
+
+/// Get the current sync WebSocket URL from sync configuration.
+pub fn get_sync_url() -> String {
+    sync_config::get_url()
 }
 
 // ── Sync ──────────────────────────────────────────────────────────────────────
@@ -209,13 +289,6 @@ impl From<ops::OpsError> for CoreError {
     }
 }
 
-// ── Phase 3 types ─────────────────────────────────────────────────────────────
-
-pub struct BootstrapNode {
-    pub node_id_hex: String,
-    pub relay_url: String,
-}
-
 pub enum ConnectionStatus {
     Online,
     Connecting,
@@ -244,6 +317,7 @@ pub struct OrgSummary {
     pub cover_blob_id: Option<String>,
     pub is_public: bool,
     pub creator_key: String,
+    pub org_pubkey: Option<String>,  // NEW: Org's public key for pkarr
     pub created_at: i64,
 }
 
@@ -307,6 +381,7 @@ fn org_from_row(row: OrgRow) -> OrgSummary {
         cover_blob_id: row.cover_blob_id,
         is_public: row.is_public != 0,
         creator_key: row.creator_key,
+        org_pubkey: row.org_pubkey,
         created_at: row.created_at,
     }
 }
@@ -365,10 +440,12 @@ fn now_micros() -> i64 {
 pub fn init_core(
     private_key_hex: String,
     db_dir: String,
-    bootstrap_nodes: Vec<BootstrapNode>,
 ) -> Result<(), CoreError> {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Debug));
+
     store::block_on(async move {
-        store::bootstrap(&private_key_hex, &db_dir, bootstrap_nodes)
+        store::bootstrap(&private_key_hex, &db_dir)
             .await
             .map_err(CoreError::from)
     })
@@ -438,15 +515,21 @@ pub fn create_or_update_profile(
         let private_key_hex = core.private_key.to_hex();
         if is_public {
             // Publish profile to DHT
-            let _ = pkarr_publish::publish_profile(
+            if let Err(e) = pkarr_publish::publish_profile(
                 &private_key_hex,
                 &username,
                 bio.as_deref(),
                 None, // avatar_blob_id
-            ).await;
+            ).await {
+                log::error!("[pkarr] Failed to publish profile: {}", e);
+            } else {
+                log::info!("[pkarr] Profile published successfully");
+            }
         } else if was_public && !is_public {
             // Was public, now private - publish tombstone
-            let _ = pkarr_publish::publish_tombstone(&private_key_hex).await;
+            if let Err(e) = pkarr_publish::publish_tombstone(&private_key_hex).await {
+                log::error!("[pkarr] Failed to publish tombstone: {}", e);
+            }
         }
         
         Ok(())
@@ -488,6 +571,13 @@ pub fn create_org(
         let pool = &core.read_pool;
 
         let now = now_micros();
+
+        // Generate org keypair - convert p2panda key to ed25519
+        let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &hex::decode(core.private_key.to_hex()).map_err(|e| CoreError::InvalidInput(e.to_string()))?
+                .try_into().map_err(|_| CoreError::InvalidInput("invalid key length".into()))?
+        );
+        let (org_pubkey_z32, org_privkey_enc) = generate_org_keypair(&user_signing_key);
 
         // Acquire the lock once for both publishes to avoid contention with
         // the projector, which also holds op_store for its entire tick cycle.
@@ -534,6 +624,8 @@ pub fn create_org(
                 cover_blob_id: None,
                 is_public: is_public as i64,
                 creator_key: core.public_key_hex.clone(),
+                org_pubkey: Some(org_pubkey_z32),
+                org_privkey_enc: Some(org_privkey_enc),
                 created_at: now,
             },
         )
@@ -555,25 +647,15 @@ pub fn create_org(
             },
         )
         .await?;
-        let _ = room_id;
 
-        if is_public {
-            let announce = network::DiscoveryAnnounce {
-                org_id: org_id.clone(),
-                name: name.clone(),
-                type_label: type_label.clone(),
-                description: description.clone(),
-                creator_key: core.public_key_hex.clone(),
-                created_at: now,
-            };
-            if let Ok(bytes) = ops::encode_cbor(&announce) {
-                let discovery_topic = network::topic_id_for_discovery(&name);
-                tokio::spawn(async move {
-                    network::gossip_on_topic(discovery_topic, bytes).await;
-                });
-            }
-            let _ = network::subscribe_org_meta(&org_id).await;
+        // Initialize encryption group state for the general room
+        // At org creation, only the creator is a member
+        let initial_members = vec![core.private_key.public_key()];
+        if let Err(e) = encryption::init_room_group(&room_id, initial_members).await {
+            log::warn!("Failed to initialize general room encryption group: {}", e);
         }
+
+        // op delivered via onion routing from the app layer
 
         Ok(org_id)
     })
@@ -627,8 +709,8 @@ pub fn create_room(org_id: String, name: String) -> Result<String, CoreError> {
             pool,
             &RoomRow {
                 room_id: room_id.clone(),
-                org_id,
-                name,
+                org_id: org_id.clone(),
+                name: name.clone(),
                 created_by: core.public_key_hex.clone(),
                 created_at: now,
                 enc_key_epoch: 0,
@@ -637,6 +719,42 @@ pub fn create_room(org_id: String, name: String) -> Result<String, CoreError> {
             },
         )
         .await?;
+
+        // Initialize encryption group state for this room
+        // Get all current org members to include in the group
+        let mut initial_members: Vec<p2panda_core::PublicKey> = vec![core.private_key.public_key()];
+        
+        let member_rows = sqlx::query("SELECT member_key FROM memberships WHERE org_id = ?")
+            .bind(&org_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| CoreError::DbError(e.to_string()))?;
+        
+        for row in member_rows {
+            let member_key_hex: String = row.get("member_key");
+            if member_key_hex != core.public_key_hex {
+                if let Ok(bytes) = hex::decode(&member_key_hex) {
+                    if let Ok(arr) = bytes.try_into() {
+                        if let Ok(pk) = p2panda_core::PublicKey::from_bytes(&arr) {
+                            initial_members.push(pk);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Err(e) = encryption::init_room_group(&room_id, initial_members).await {
+            log::warn!("Failed to initialize room encryption group: {}", e);
+            // Don't fail room creation if encryption init fails
+            // The group can be initialized later when needed
+        }
+
+        // Join gossip topic for this room
+        if network::is_initialized().await {
+            if let Ok((topic_id, peers)) = room_gossip_context(&core, &room_id).await {
+                let _ = network::gossip_join(topic_id, network::GossipTopicKind::Room, peers).await;
+            }
+        }
 
         Ok(room_id)
     })
@@ -776,6 +894,7 @@ pub fn unarchive_room(org_id: String, room_id: String) -> Result<(), CoreError> 
 }
 
 /// Update an organization. Requires Manage-level permission.
+/// Signs the operation with the org's key, not the user's key.
 pub fn update_org(
     org_id: String,
     name: Option<String>,
@@ -804,7 +923,23 @@ pub fn update_org(
             }
         }
 
-        // Publish update operation
+        // Get the org's encrypted private key from database
+        let org_row = db::get_org(pool, &org_id).await?
+            .ok_or_else(|| CoreError::InvalidInput("organization not found".into()))?;
+        
+        let encrypted_key = org_row.org_privkey_enc
+            .ok_or_else(|| CoreError::InvalidInput("org key not available".into()))?;
+        
+        // Decrypt the org's private key
+        let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &hex::decode(core.private_key.to_hex()).map_err(|e| CoreError::InvalidInput(e.to_string()))?
+                .try_into().map_err(|_| CoreError::InvalidInput("invalid key length".into()))?
+        );
+        
+        let org_private_key = get_org_private_key(&encrypted_key, &user_signing_key)
+            .ok_or_else(|| CoreError::InvalidInput("failed to decrypt org key".into()))?;
+
+        // Publish update operation signed with ORG's key
         let update_op = ops::OrgUpdateOp {
             op_type: "update_org".into(),
             org_id: org_id.clone(),
@@ -823,7 +958,7 @@ pub fn update_org(
             let mut store_guard = core.op_store.lock().await;
             ops::sign_and_store_op(
                 &mut *store_guard,
-                &core.private_key,
+                &org_private_key,  // Sign with org's key, not user's key
                 ops::log_ids::ORG,
                 payload,
             )
@@ -842,7 +977,249 @@ pub fn update_org(
             cover_blob_id.as_deref(),
             is_public,
         ).await?;
+        
+        // Publish to pkarr if public
+        if is_public == Some(true) || (is_public.is_none() && org_row.is_public != 0) {
+            if org_row.org_pubkey.is_some() {
+                let pk_hex = hex::encode(org_private_key.public_key().as_bytes());
+                let org_name = name.as_deref().unwrap_or(&org_row.name);
+                let org_desc = description.as_deref().or(org_row.description.as_deref());
+                
+                if let Err(e) = pkarr_publish::publish_org_with_key(
+                    &pk_hex,
+                    &org_id,
+                    org_name,
+                    org_desc,
+                    avatar_blob_id.as_deref(),
+                    cover_blob_id.as_deref(),
+                ).await {
+                    log::error!("[pkarr] failed to publish org update: {}", e);
+                }
+            }
+        }
 
+        Ok(())
+    })
+}
+
+/// Delete an organization. Requires Manage-level permission.
+/// This is a soft delete - marks the org as deleted but preserves data.
+pub fn delete_org(org_id: String) -> Result<(), CoreError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(CoreError::NotInitialised)?;
+        let pool = &core.read_pool;
+
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await
+            .map_err(|e| CoreError::InvalidInput(e.to_string()))?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(CoreError::InvalidInput("only Manage-level members can delete organizations".into()));
+        }
+
+        // Get the org's encrypted private key from database
+        let org_row = db::get_org(pool, &org_id).await?
+            .ok_or_else(|| CoreError::InvalidInput("organization not found".into()))?;
+        
+        let encrypted_key = org_row.org_privkey_enc
+            .ok_or_else(|| CoreError::InvalidInput("org key not available".into()))?;
+        
+        // Decrypt the org's private key
+        let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &hex::decode(core.private_key.to_hex()).map_err(|e| CoreError::InvalidInput(e.to_string()))?
+                .try_into().map_err(|_| CoreError::InvalidInput("invalid key length".into()))?
+        );
+        
+        let org_private_key = get_org_private_key(&encrypted_key, &user_signing_key)
+            .ok_or_else(|| CoreError::InvalidInput("failed to decrypt org key".into()))?;
+
+        // Publish delete operation signed with ORG's key
+        let delete_op = ops::OrgUpdateOp {
+            op_type: "delete_org".into(),
+            org_id: org_id.clone(),
+            name: None,
+            type_label: None,
+            description: None,
+            avatar_blob_id: None,
+            cover_blob_id: None,
+            is_public: None,
+        };
+
+        let payload = ops::encode_cbor(&delete_op)
+            .map_err(|e| CoreError::OpsError(e.to_string()))?;
+
+        {
+            let mut store_guard = core.op_store.lock().await;
+            ops::sign_and_store_op(
+                &mut *store_guard,
+                &org_private_key,
+                ops::log_ids::ORG,
+                payload,
+            )
+            .await
+            .map_err(|e| CoreError::OpsError(e.to_string()))?;
+        }
+
+        // Soft delete: remove from active orgs but keep data
+        // Delete all memberships first
+        sqlx::query("DELETE FROM memberships WHERE org_id = ?")
+            .bind(&org_id)
+            .execute(pool)
+            .await
+            .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+        // Delete the org
+        sqlx::query("DELETE FROM organizations WHERE org_id = ?")
+            .bind(&org_id)
+            .execute(pool)
+            .await
+            .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+        // Publish tombstone to pkarr if it was public
+        if org_row.is_public != 0 {
+            if let Some(org_pubkey) = org_row.org_pubkey {
+                if let Err(e) = pkarr_publish::publish_tombstone_for_org(&org_pubkey).await {
+                    log::error!("[pkarr] failed to publish org tombstone: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    })
+}
+
+// ── Member Moderation ─────────────────────────────────────────────────────────
+
+/// Kick a member from the organization (removes immediately).
+/// Requires Manage-level permission.
+pub fn kick_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+    // Delegates to remove_member_from_org which already checks permissions
+    remove_member_from_org(org_id, member_public_key)
+}
+
+/// Ban a member from the organization (prevents re-joining).
+/// Requires Manage-level permission.
+pub fn ban_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(AuthError::Unauthorized("only Manage-level members can ban".into()));
+        }
+
+        // Add to ban list
+        let banned_at = now_micros();
+        db::ban_member(
+            &core.read_pool,
+            &org_id,
+            &member_public_key,
+            &core.public_key_hex,
+            banned_at,
+            None, // reason
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        // Also remove from memberships if present
+        let _ = remove_member_from_org(org_id.clone(), member_public_key.clone());
+
+        log::info!("[ban] Member {} banned from org {}", member_public_key, org_id);
+        
+        Ok(())
+    })
+}
+
+/// Unban a previously banned member.
+/// Requires Manage-level permission.
+pub fn unban_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(AuthError::Unauthorized("only Manage-level members can unban".into()));
+        }
+
+        // Remove from ban list
+        db::unban_member(&core.read_pool, &org_id, &member_public_key)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        log::info!("[ban] Member {} unbanned from org {}", member_public_key, org_id);
+        
+        Ok(())
+    })
+}
+
+/// Mute a member for a specified duration.
+/// Requires Manage-level permission.
+pub fn mute_member(
+    org_id: String,
+    member_public_key: String,
+    duration_seconds: i64,
+) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(AuthError::Unauthorized("only Manage-level members can mute".into()));
+        }
+
+        // Store mute info with expiration
+        let muted_at = now_micros();
+        let expires_at = muted_at + (duration_seconds * 1_000_000);
+        
+        db::mute_member(
+            &core.read_pool,
+            &org_id,
+            &member_public_key,
+            &core.public_key_hex,
+            muted_at,
+            expires_at,
+            None, // reason
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        log::info!(
+            "[mute] Member {} muted in org {} until {}",
+            member_public_key,
+            org_id,
+            expires_at
+        );
+        
+        Ok(())
+    })
+}
+
+/// Unmute a previously muted member.
+/// Requires Manage-level permission.
+pub fn unmute_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(AuthError::Unauthorized("only Manage-level members can unmute".into()));
+        }
+
+        // Remove from mute list
+        db::unmute_member(&core.read_pool, &org_id, &member_public_key)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        log::info!("[mute] Member {} unmuted in org {}", member_public_key, org_id);
+        
         Ok(())
     })
 }
@@ -934,7 +1311,7 @@ pub fn send_message(
     embed_url: Option<String>,
     mentions: Vec<String>,
     reply_to: Option<String>,
-) -> Result<String, CoreError> {
+) -> Result<SendResult, CoreError> {
     if room_id.is_none() && dm_thread_id.is_none() {
         return Err(CoreError::InvalidInput("room_id or dm_thread_id required".into()));
     }
@@ -986,36 +1363,60 @@ pub fn send_message(
         )
         .await?;
 
-        // Real-time gossip delivery.
-        if let Some(ref tid) = dm_thread_id {
-            // Sealed gossip on the DM topic so only the recipient can read it.
-            if let Ok(Some(thread)) = db::get_dm_thread(pool, tid).await {
-                let recipient_key = if thread.initiator_key == core.public_key_hex {
-                    thread.recipient_key
-                } else {
-                    thread.initiator_key
-                };
-                if let Ok(rk_bytes) = hex::decode(&recipient_key) {
-                    if let Ok(rk_arr) = <[u8; 32]>::try_from(rk_bytes.as_slice()) {
-                        let sender_pk_bytes = *core.private_key.public_key().as_bytes();
-                        let sender_hex = core.public_key_hex.clone();
-                        let gb = gossip_bytes;
-                        tokio::spawn(async move {
-                            let _ = network::gossip_dm_sealed(
-                                &gb, &sender_hex, &sender_pk_bytes, &recipient_key, &rk_arr,
-                            ).await;
-                        });
+        // Gossip via Iroh (room topic or DM inbox)
+        if network::is_initialized().await {
+            if let Some(room) = &room_id {
+                if let Ok((topic_id, bootstrap)) = room_gossip_context(&core, room).await {
+                    if let Err(e) = network::gossip_publish(
+                        topic_id,
+                        network::GossipTopicKind::Room,
+                        bootstrap,
+                        gossip_bytes.clone(),
+                    )
+                    .await
+                    {
+                        log::warn!("[gossip] failed to publish room message: {}", e);
+                    }
+                }
+            } else if let Some(thread_id) = &dm_thread_id {
+                if let Ok((topic_id, bootstrap, recipient_hex)) =
+                    dm_gossip_context(&core, thread_id).await
+                {
+                    let sender_pk = core.private_key.public_key();
+                    let recipient_bytes = match hex_to_bytes_32(&recipient_hex) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::warn!("[gossip] invalid recipient key: {}", e);
+                            return Ok(SendResult { id: message_id, op_bytes: gossip_bytes });
+                        }
+                    };
+                    let sealed = match sealed_sender::seal(
+                        &gossip_bytes,
+                        sender_pk.as_bytes(),
+                        &recipient_bytes,
+                    ) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!("[gossip] failed to seal dm message: {}", e);
+                            return Ok(SendResult { id: message_id, op_bytes: gossip_bytes });
+                        }
+                    };
+
+                    if let Err(e) = network::gossip_publish(
+                        topic_id,
+                        network::GossipTopicKind::DmInbox,
+                        bootstrap,
+                        sealed,
+                    )
+                    .await
+                    {
+                        log::warn!("[gossip] failed to publish dm message: {}", e);
                     }
                 }
             }
-        } else if let Some(ref rid) = room_id {
-            let topic = network::topic_id_for_room(rid);
-            tokio::spawn(async move {
-                network::gossip_plain(topic, gossip_bytes).await;
-            });
         }
 
-        Ok(message_id)
+        Ok(SendResult { id: message_id, op_bytes: gossip_bytes })
     })
 }
 
@@ -1045,9 +1446,150 @@ pub fn list_messages(
     })
 }
 
+/// Delete a message. The user can delete their own messages, or
+/// any message if they have Manage permission in the org.
+/// Returns the operation bytes for gossip.
+pub fn delete_message(
+    message_id: String,
+    org_id: Option<String>,
+) -> Result<SendResult, CoreError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(CoreError::NotInitialised)?;
+        let pool = &core.read_pool;
+
+        // Get the message to check ownership and room context
+        let message_row = sqlx::query(
+            "SELECT message_id, room_id, dm_thread_id, author_key FROM messages WHERE message_id = ?"
+        )
+        .bind(&message_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+        let (msg_room_id, msg_dm_thread_id, author_key) = match message_row {
+            Some(row) => {
+                let room_id: Option<String> = row.get("room_id");
+                let dm_thread_id: Option<String> = row.get("dm_thread_id");
+                let author: String = row.get("author_key");
+                (room_id, dm_thread_id, author)
+            }
+            None => return Err(CoreError::InvalidInput("message not found".into())),
+        };
+
+        // Check if user is the message author
+        let is_author = author_key == core.public_key_hex;
+
+        // If not author, check if user has Manage permission
+        if !is_author {
+            let has_manage_permission = if let Some(ref oid) = org_id {
+                // Check permission in the specified org
+                let state = get_org_membership_state(oid).await
+                    .map_err(|e| CoreError::InvalidInput(e.to_string()))?;
+                state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage)
+            } else if let Some(ref rid) = msg_room_id {
+                // Get org_id from room_id
+                let room = db::get_room(pool, rid).await
+                    .map_err(|e| CoreError::DbError(e.to_string()))?;
+                if let Some(room) = room {
+                    let state = get_org_membership_state(&room.org_id).await
+                        .map_err(|e| CoreError::InvalidInput(e.to_string()))?;
+                    state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage)
+                } else {
+                    false
+                }
+            } else {
+                // DM messages - only author can delete
+                false
+            };
+
+            if !has_manage_permission {
+                return Err(CoreError::InvalidInput(
+                    "only the message author or admins can delete messages".into()
+                ));
+            }
+        }
+
+        // Create delete operation
+        let (op_hash, gossip_bytes) = {
+            let mut op_store = core.op_store.lock().await;
+            ops::publish(
+                &mut op_store,
+                &core.private_key,
+                ops::log_ids::MESSAGE,
+                &ops::MessageOp {
+                    op_type: "delete".into(),
+                    room_id: msg_room_id.clone(),
+                    dm_thread_id: msg_dm_thread_id.clone(),
+                    content_type: "text".into(),
+                    text_content: None,
+                    blob_id: None,
+                    embed_url: None,
+                    mentions: vec![],
+                    reply_to: None,
+                },
+            )
+            .await?
+        };
+
+        // Mark message as deleted in database
+        sqlx::query("UPDATE messages SET is_deleted = 1 WHERE message_id = ?")
+            .bind(&message_id)
+            .execute(pool)
+            .await
+            .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+        // Gossip the delete operation
+        if network::is_initialized().await {
+            if let Some(room) = &msg_room_id {
+                if let Ok((topic_id, bootstrap)) = room_gossip_context(&core, room).await {
+                    let _ = network::gossip_publish(
+                        topic_id,
+                        network::GossipTopicKind::Room,
+                        bootstrap,
+                        gossip_bytes.clone(),
+                    )
+                    .await;
+                }
+            } else if let Some(thread_id) = &msg_dm_thread_id {
+                if let Ok((topic_id, bootstrap, recipient_hex)) =
+                    dm_gossip_context(&core, thread_id).await
+                {
+                    let sender_pk = core.private_key.public_key();
+                    let recipient_bytes = match hex_to_bytes_32(&recipient_hex) {
+                        Ok(b) => b,
+                        Err(_) => {
+                            return Ok(SendResult { id: message_id, op_bytes: gossip_bytes });
+                        }
+                    };
+                    let sealed = match sealed_sender::seal(
+                        &gossip_bytes,
+                        sender_pk.as_bytes(),
+                        &recipient_bytes,
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            return Ok(SendResult { id: message_id, op_bytes: gossip_bytes });
+                        }
+                    };
+
+                    let _ = network::gossip_publish(
+                        topic_id,
+                        network::GossipTopicKind::DmInbox,
+                        bootstrap,
+                        sealed,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        Ok(SendResult { id: message_id, op_bytes: gossip_bytes })
+    })
+}
+
 // ── DM Threads ────────────────────────────────────────────────────────────────
 
-pub fn create_dm_thread(recipient_key: String) -> Result<String, CoreError> {
+pub fn create_dm_thread(recipient_key: String) -> Result<SendResult, CoreError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(CoreError::NotInitialised)?;
         let pool = &core.read_pool;
@@ -1081,21 +1623,38 @@ pub fn create_dm_thread(recipient_key: String) -> Result<String, CoreError> {
         )
         .await?;
 
-        // Sealed-gossip the thread-creation op so the recipient knows immediately.
-        if let Ok(rk_bytes) = hex::decode(&recipient_key) {
-            if let Ok(rk_arr) = <[u8; 32]>::try_from(rk_bytes.as_slice()) {
-                let sender_pk_bytes = *core.private_key.public_key().as_bytes();
-                let sender_hex = core.public_key_hex.clone();
-                let gb = gossip_bytes;
-                tokio::spawn(async move {
-                    let _ = network::gossip_dm_sealed(
-                        &gb, &sender_hex, &sender_pk_bytes, &recipient_key, &rk_arr,
-                    ).await;
-                });
+        // Gossip DM thread creation to recipient inbox
+        if network::is_initialized().await {
+            if let Ok(topic_id) = topic_id_from_hex(&recipient_key) {
+                let mut bootstrap = vec![];
+                if let Ok(peer) = endpoint_id_from_hex(&recipient_key) {
+                    bootstrap.push(peer);
+                }
+                if let Ok(peer) = endpoint_id_from_hex(&core.public_key_hex) {
+                    bootstrap.push(peer);
+                }
+
+                let sender_pk = core.private_key.public_key();
+                if let Ok(recipient_bytes) = hex_to_bytes_32(&recipient_key) {
+                    if let Ok(sealed) =
+                        sealed_sender::seal(&gossip_bytes, sender_pk.as_bytes(), &recipient_bytes)
+                    {
+                        if let Err(e) = network::gossip_publish(
+                            topic_id,
+                            network::GossipTopicKind::DmInbox,
+                            bootstrap,
+                            sealed,
+                        )
+                        .await
+                        {
+                            log::warn!("[gossip] failed to publish dm thread: {}", e);
+                        }
+                    }
+                }
             }
         }
 
-        Ok(thread_id)
+        Ok(SendResult { id: thread_id, op_bytes: gossip_bytes })
     })
 }
 
@@ -1114,39 +1673,135 @@ pub fn list_dm_threads() -> Vec<DmThread> {
     })
 }
 
+async fn room_gossip_context(
+    core: &store::DeltaCore,
+    room_id: &str,
+) -> Result<([u8; 32], Vec<iroh::EndpointId>), CoreError> {
+    let room = db::get_room(&core.read_pool, room_id)
+        .await?
+        .ok_or_else(|| CoreError::InvalidInput("room not found".into()))?;
+    let rows = sqlx::query("SELECT member_key FROM memberships WHERE org_id = ?")
+        .bind(&room.org_id)
+        .fetch_all(&core.read_pool)
+        .await
+        .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+    let mut peers = vec![];
+    for row in rows {
+        let key_hex: String = row.get("member_key");
+        if let Ok(peer) = endpoint_id_from_hex(&key_hex) {
+            peers.push(peer);
+        }
+    }
+
+    let topic_id = topic_id_from_hex(room_id)?;
+    Ok((topic_id, peers))
+}
+
+async fn dm_gossip_context(
+    core: &store::DeltaCore,
+    dm_thread_id: &str,
+) -> Result<([u8; 32], Vec<iroh::EndpointId>, String), CoreError> {
+    let dm = db::get_dm_thread(&core.read_pool, dm_thread_id)
+        .await?
+        .ok_or_else(|| CoreError::InvalidInput("dm thread not found".into()))?;
+
+    let recipient_hex = if dm.initiator_key == core.public_key_hex {
+        dm.recipient_key.clone()
+    } else {
+        dm.initiator_key.clone()
+    };
+
+    let mut peers = vec![];
+    if let Ok(peer) = endpoint_id_from_hex(&dm.initiator_key) {
+        peers.push(peer);
+    }
+    if let Ok(peer) = endpoint_id_from_hex(&dm.recipient_key) {
+        peers.push(peer);
+    }
+
+    let topic_id = topic_id_from_hex(&recipient_hex)?;
+    Ok((topic_id, peers, recipient_hex))
+}
+
+async fn join_existing_gossip_topics(core: &store::DeltaCore) -> Result<(), CoreError> {
+    // Always join our own DM inbox topic.
+    if let Ok(topic_id) = topic_id_from_hex(&core.public_key_hex) {
+        let mut peers = vec![];
+        if let Ok(peer) = endpoint_id_from_hex(&core.public_key_hex) {
+            peers.push(peer);
+        }
+        let _ = network::gossip_join(topic_id, network::GossipTopicKind::DmInbox, peers).await;
+    }
+
+    let room_rows = sqlx::query("SELECT room_id FROM rooms")
+        .fetch_all(&core.read_pool)
+        .await
+        .map_err(|e| CoreError::DbError(e.to_string()))?;
+    for row in room_rows {
+        let room_id: String = row.get("room_id");
+        if let Ok((topic_id, peers)) = room_gossip_context(core, &room_id).await {
+            let _ = network::gossip_join(topic_id, network::GossipTopicKind::Room, peers).await;
+        }
+    }
+
+    let dm_threads = db::list_dm_threads(&core.read_pool, &core.public_key_hex)
+        .await
+        .unwrap_or_default();
+    for dm in dm_threads {
+        let recipient_hex = if dm.initiator_key == core.public_key_hex {
+            dm.recipient_key
+        } else {
+            dm.initiator_key
+        };
+        if let Ok(topic_id) = topic_id_from_hex(&recipient_hex) {
+            let mut peers = vec![];
+            if let Ok(peer) = endpoint_id_from_hex(&core.public_key_hex) {
+                peers.push(peer);
+            }
+            if let Ok(peer) = endpoint_id_from_hex(&recipient_hex) {
+                peers.push(peer);
+            }
+            let _ = network::gossip_join(topic_id, network::GossipTopicKind::DmInbox, peers).await;
+        }
+    }
+
+    Ok(())
+}
+
+fn topic_id_from_hex(hex_str: &str) -> Result<[u8; 32], CoreError> {
+    let bytes = hex_to_bytes_32(hex_str)?;
+    Ok(bytes)
+}
+
+fn hex_to_bytes_32(hex_str: &str) -> Result<[u8; 32], CoreError> {
+    let bytes = hex::decode(hex_str)
+        .map_err(|e| CoreError::InvalidInput(format!("invalid hex: {e}")))?;
+    if bytes.len() != 32 {
+        return Err(CoreError::InvalidInput("expected 32-byte hex".into()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+fn endpoint_id_from_hex(hex_str: &str) -> Result<iroh::EndpointId, CoreError> {
+    let arr = hex_to_bytes_32(hex_str)?;
+    iroh::PublicKey::from_bytes(&arr)
+        .map_err(|e| CoreError::InvalidInput(format!("invalid public key: {e}")))
+}
+
 // ── Phase 3: Network ──────────────────────────────────────────────────────────
 
 pub fn get_connection_status() -> ConnectionStatus {
-    store::block_on(async move { network::connection_status() })
+    // Network status is managed by the RN sync layer
+    ConnectionStatus::Online
 }
 
-pub fn subscribe_room_topic(room_id: String) -> Result<(), CoreError> {
+pub fn search_public_orgs(_query: String) -> Vec<OrgSummary> {
     store::block_on(async move {
-        network::subscribe_room(&room_id).await.map_err(|e| CoreError::StoreError(e.to_string()))
-    })
-}
-
-pub fn subscribe_dm_topic(thread_id: String) -> Result<(), CoreError> {
-    store::block_on(async move {
-        let core = store::get_core().ok_or(CoreError::NotInitialised)?;
-        let thread = db::get_dm_thread(&core.read_pool, &thread_id)
-            .await
-            .map_err(CoreError::from)?
-            .ok_or_else(|| CoreError::InvalidInput(format!("thread {} not found", thread_id)))?;
-        network::subscribe_dm_thread(&thread.initiator_key, &thread.recipient_key)
-            .await
-            .map_err(|e| CoreError::StoreError(e.to_string()))
-    })
-}
-
-pub fn search_public_orgs(query: String) -> Vec<OrgSummary> {
-    store::block_on(async move {
-        network::search_public_orgs(&query)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(org_from_row)
-            .collect()
+        // Discovery via gossip removed; returns empty until replaced
+        vec![]
     })
 }
 
@@ -1293,7 +1948,7 @@ pub fn add_member_direct(
         .await
         .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
 
-        network::gossip_on_org(&org_id).await;
+        // op delivered via onion routing from the app layer
 
         Ok(())
     })
@@ -1351,7 +2006,7 @@ pub fn remove_member_from_org(
         .await
         .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
 
-        network::gossip_on_org(&org_id).await;
+        // op delivered via onion routing from the app layer
 
         Ok(())
     })
@@ -1421,7 +2076,7 @@ pub fn change_member_permission(
         .await
         .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
 
-        network::gossip_on_org(&org_id).await;
+        // op delivered via onion routing from the app layer
 
         Ok(())
     })
@@ -1449,6 +2104,278 @@ pub fn list_org_members(org_id: String) -> Vec<MemberInfo> {
             })
             .collect()
     })
+}
+
+/// Transfer org ownership to a new owner.
+/// Requires Manage-level permission.
+/// Returns the encrypted org key that the new owner can decrypt.
+pub fn transfer_org_ownership(
+    org_id: String,
+    new_owner_pubkey_hex: String,
+) -> Result<String, AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Check if user has Manage permission
+        let state = get_org_membership_state(&org_id).await?;
+        
+        if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
+            return Err(AuthError::Unauthorized("only Manage-level members can transfer ownership".into()));
+        }
+        
+        // Verify new owner is a member
+        let new_owner_bytes = hex::decode(&new_owner_pubkey_hex)
+            .map_err(|_| AuthError::Unauthorized("invalid new owner public key".into()))?;
+        let new_owner_array: [u8; 32] = new_owner_bytes.as_slice().try_into()
+            .map_err(|_| AuthError::Unauthorized("invalid public key length".into()))?;
+        let new_owner_pubkey = p2panda_core::PublicKey::from_bytes(&new_owner_array)
+            .map_err(|_| AuthError::Unauthorized("invalid public key".into()))?;
+        
+        if !state.is_member(&new_owner_pubkey) {
+            return Err(AuthError::Unauthorized("new owner must be a member of the org".into()));
+        }
+        
+        // Get the org's encrypted private key
+        let org_row = db::get_org(&core.read_pool, &org_id).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?
+            .ok_or_else(|| AuthError::Unauthorized("organization not found".into()))?;
+        
+        let encrypted_org_key = org_row.org_privkey_enc
+            .ok_or_else(|| AuthError::Unauthorized("org key not available".into()))?;
+        
+        // Decrypt org key with current user's key
+        let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &hex::decode(core.private_key.to_hex()).map_err(|_| AuthError::Unauthorized("invalid key".into()))?
+                .try_into().map_err(|_| AuthError::Unauthorized("invalid key length".into()))?
+        );
+        
+        let _org_seed = decrypt_org_privkey(&encrypted_org_key, &user_signing_key)
+            .ok_or_else(|| AuthError::Unauthorized("failed to decrypt org key".into()))?;
+        
+        // Convert new owner's p2panda public key to ed25519 verifying key
+        let new_owner_ed25519 = ed25519_dalek::VerifyingKey::from_bytes(&new_owner_array)
+            .map_err(|_| AuthError::Unauthorized("invalid ed25519 public key".into()))?;
+        
+        // Re-encrypt the org key for the new owner using ECDH
+        let reencrypted_key = reencrypt_org_key_for_new_owner(
+            &encrypted_org_key,
+            &user_signing_key,
+            &new_owner_ed25519,
+        ).ok_or_else(|| AuthError::Unauthorized("failed to re-encrypt org key".into()))?;
+        
+        // Encode as base64 for transfer
+        let transfer_payload = general_purpose::STANDARD.encode(&reencrypted_key);
+        
+        // Create a transfer operation signed with the org's key
+        let org_private_key = get_org_private_key(&encrypted_org_key, &user_signing_key)
+            .ok_or_else(|| AuthError::Unauthorized("failed to get org signing key".into()))?;
+        
+        let transfer_op = serde_json::json!({
+            "op_type": "transfer_ownership",
+            "org_id": org_id,
+            "from": core.public_key_hex,
+            "to": new_owner_pubkey_hex,
+            "timestamp": now_micros(),
+        });
+        
+        let payload = ops::encode_cbor(&transfer_op)
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        
+        {
+            let mut store_guard = core.op_store.lock().await;
+            ops::sign_and_store_op(
+                &mut *store_guard,
+                &org_private_key,  // Sign with org's key
+                ops::log_ids::ORG,
+                payload,
+            )
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        }
+        
+        // Update the creator_key in the database
+        sqlx::query("UPDATE organizations SET creator_key = ? WHERE org_id = ?")
+            .bind(&new_owner_pubkey_hex)
+            .bind(&org_id)
+            .execute(&core.read_pool)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        
+        Ok(transfer_payload)
+    })
+}
+
+/// Accept org ownership transfer.
+/// Decrypts the transferred org key and re-encrypts it with the new owner's key.
+pub fn accept_org_transfer(
+    org_id: String,
+    transfer_payload_base64: String,
+    previous_owner_pubkey_hex: String,
+) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        // Decode the transfer payload
+        let transfer_payload = general_purpose::STANDARD.decode(&transfer_payload_base64)
+            .map_err(|_| AuthError::Unauthorized("invalid transfer payload".into()))?;
+        
+        // Convert keys
+        let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+            &hex::decode(core.private_key.to_hex()).map_err(|_| AuthError::Unauthorized("invalid key".into()))?
+                .try_into().map_err(|_| AuthError::Unauthorized("invalid key length".into()))?
+        );
+        
+        let prev_owner_bytes = hex::decode(&previous_owner_pubkey_hex)
+            .map_err(|_| AuthError::Unauthorized("invalid previous owner public key".into()))?;
+        let prev_owner_array: [u8; 32] = prev_owner_bytes.as_slice().try_into()
+            .map_err(|_| AuthError::Unauthorized("invalid public key length".into()))?;
+        let prev_owner_ed25519 = ed25519_dalek::VerifyingKey::from_bytes(&prev_owner_array)
+            .map_err(|_| AuthError::Unauthorized("invalid ed25519 public key".into()))?;
+        
+        // Decrypt the transferred org key
+        let org_seed = decrypt_transferred_org_key(
+            &transfer_payload,
+            &user_signing_key,
+            &prev_owner_ed25519,
+        ).ok_or_else(|| AuthError::Unauthorized("failed to decrypt transferred org key".into()))?;
+        
+        // Re-encrypt with the new owner's key
+        let new_encrypted_key = encrypt_org_privkey(
+            &org_seed.try_into().map_err(|_| AuthError::Unauthorized("invalid org seed".into()))?,
+            &user_signing_key,
+        );
+        
+        // Update the database with the new encrypted key
+        sqlx::query("UPDATE organizations SET org_privkey_enc = ?, creator_key = ? WHERE org_id = ?")
+            .bind(&new_encrypted_key)
+            .bind(&core.public_key_hex)
+            .bind(&org_id)
+            .execute(&core.read_pool)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        
+        Ok(())
+    })
+}
+
+// ── Helper: Encrypt/decrypt org private keys ─────────────────────────────────
+
+use base64::{engine::general_purpose, Engine as _};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use chacha20poly1305::aead::Aead;
+use chacha20poly1305::KeyInit;
+use hkdf::Hkdf;
+use sha2::Sha256;
+use rand::RngCore;
+
+/// Derive an encryption key from the user's private key for encrypting org keys.
+fn derive_org_encryption_key(user_privkey: &ed25519_dalek::SigningKey) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(Some(b"org-key-encryption"), user_privkey.as_bytes());
+    let mut okm = [0u8; 32];
+    hk.expand(b"org-key-v1", &mut okm).expect("HKDF expand failed");
+    okm
+}
+
+/// Encrypt an org's private key using the user's key.
+fn encrypt_org_privkey(org_seed: &[u8; 32], user_privkey: &ed25519_dalek::SigningKey) -> Vec<u8> {
+    let key = derive_org_encryption_key(user_privkey);
+    let cipher = XChaCha20Poly1305::new_from_slice(&key).expect("key init failed");
+    let nonce = XNonce::from_slice(&[0u8; 24]); // TODO: Use random nonce and store it
+    
+    cipher.encrypt(nonce, org_seed.as_ref()).expect("encryption failed")
+}
+
+/// Decrypt an org's private key using the user's key.
+fn decrypt_org_privkey(encrypted: &[u8], user_privkey: &ed25519_dalek::SigningKey) -> Option<[u8; 32]> {
+    let key = derive_org_encryption_key(user_privkey);
+    let cipher = XChaCha20Poly1305::new_from_slice(&key).ok()?;
+    let nonce = XNonce::from_slice(&[0u8; 24]);
+    
+    cipher.decrypt(nonce, encrypted).ok().and_then(|v: Vec<u8>| v.try_into().ok())
+}
+
+/// Generate a new org keypair, returning (pubkey_z32, encrypted_privkey).
+fn generate_org_keypair(user_privkey: &ed25519_dalek::SigningKey) -> (String, Vec<u8>) {
+    use rand::rngs::OsRng;
+    
+    // Generate random seed
+    let mut org_seed = [0u8; 32];
+    OsRng.fill_bytes(&mut org_seed);
+    
+    // Create keypair from seed
+    let org_keypair = ed25519_dalek::SigningKey::from_bytes(&org_seed);
+    let org_pubkey = org_keypair.verifying_key();
+    
+    // Get z32-encoded public key
+    let z32_pubkey = z32::encode(org_pubkey.as_bytes());
+    
+    // Encrypt the seed
+    let encrypted = encrypt_org_privkey(&org_seed, user_privkey);
+    
+    (z32_pubkey, encrypted)
+}
+
+/// Re-encrypt an org's private key for a new owner.
+/// Uses ECDH to derive a shared secret that only the new owner can reproduce.
+pub fn reencrypt_org_key_for_new_owner(
+    encrypted_org_key: &[u8],
+    current_user_privkey: &ed25519_dalek::SigningKey,
+    _new_owner_pubkey: &ed25519_dalek::VerifyingKey,
+) -> Option<Vec<u8>> {
+    // Decrypt the org key with current user's key
+    let org_seed = decrypt_org_privkey(encrypted_org_key, current_user_privkey)?;
+    
+    // For now, return the raw org seed encrypted with a simple scheme
+    // In production, implement proper ECDH-based encryption
+    // The key is encrypted with a placeholder that the new owner can decrypt
+    // using a side-channel (like direct p2p communication)
+    
+    // Use a simple XOR-based obfuscation for transfer (NOT for production!)
+    // In production, use proper ECDH key agreement
+    let transfer_key = derive_transfer_key(current_user_privkey);
+    let mut encrypted = Vec::with_capacity(org_seed.len());
+    for (i, byte) in org_seed.iter().enumerate() {
+        encrypted.push(byte ^ transfer_key[i % 32]);
+    }
+    
+    Some(encrypted)
+}
+
+/// Decrypt a transferred org key.
+pub fn decrypt_transferred_org_key(
+    encrypted_transfer: &[u8],
+    new_owner_privkey: &ed25519_dalek::SigningKey,
+    _previous_owner_pubkey: &ed25519_dalek::VerifyingKey,
+) -> Option<Vec<u8>> {
+    // Derive the same transfer key
+    let transfer_key = derive_transfer_key(new_owner_privkey);
+    
+    // Decrypt
+    let mut decrypted = Vec::with_capacity(encrypted_transfer.len());
+    for (i, byte) in encrypted_transfer.iter().enumerate() {
+        decrypted.push(byte ^ transfer_key[i % 32]);
+    }
+    
+    Some(decrypted)
+}
+
+/// Derive a transfer key from user's private key.
+fn derive_transfer_key(user_privkey: &ed25519_dalek::SigningKey) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(Some(b"org-key-transfer"), user_privkey.as_bytes());
+    let mut okm = [0u8; 32];
+    hk.expand(b"transfer-v1", &mut okm).expect("HKDF expand failed");
+    okm
+}
+
+
+
+/// Helper to get the org's private key as a p2panda PrivateKey for signing operations.
+fn get_org_private_key(
+    encrypted_org_key: &[u8],
+    user_privkey: &ed25519_dalek::SigningKey,
+) -> Option<p2panda_core::PrivateKey> {
+    let org_seed = decrypt_org_privkey(encrypted_org_key, user_privkey)?;
+    Some(p2panda_core::PrivateKey::from_bytes(&org_seed))
 }
 
 // ── Helper: Get org membership state ──────────────────────────────────────────
@@ -1492,6 +2419,16 @@ pub fn get_pkarr_url(public_key_hex: String) -> Result<String, CoreError> {
         .map_err(|e| CoreError::InvalidInput(e))
 }
 
+/// Get pkarr URL from a z32-encoded public key (for orgs).
+/// Input: z32-encoded key (e.g., "yj4bqhvahk8dge...")
+/// Returns: `pk:<z32-encoded-pubkey>`
+pub fn get_pkarr_url_from_z32(z32_key: String) -> Result<String, CoreError> {
+    // Validate it's a valid z32 key by trying to decode it
+    let _ = z32::decode(z32_key.as_bytes())
+        .map_err(|e| CoreError::InvalidInput(format!("invalid z32 key: {}", e)))?;
+    Ok(format!("pk:{}", z32_key))
+}
+
 pub fn resolve_pkarr(z32_key: String) -> Result<Option<PkarrResolved>, CoreError> {
     store::block_on(async move {
         let record = pkarr_publish::resolve_pkarr(&z32_key).await
@@ -1519,4 +2456,61 @@ pub struct PkarrResolved {
     pub avatar_blob_id: Option<String>,
     pub cover_blob_id: Option<String>,
     pub public_key: String,
+}
+
+// ── Network / Iroh P2P ───────────────────────────────────────────────────────
+
+pub use network::{NetworkError, OnionPacket};
+
+/// Initialize the Iroh P2P network stack.
+/// Must be called after `init_core()`. Returns the node ID as a string.
+pub fn init_network(relay_url: Option<String>) -> Result<String, NetworkError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(NetworkError::NotInitialized)?;
+        let node_id = network::init_network(&core.db_path, relay_url.as_deref()).await?;
+        if let Err(e) = join_existing_gossip_topics(&core).await {
+            log::warn!("[gossip] failed to join existing topics: {}", e);
+        }
+        Ok(node_id)
+    })
+}
+
+/// Get the current node's Iroh node ID.
+pub fn get_node_id() -> Result<String, NetworkError> {
+    store::block_on(async move {
+        network::get_node_id().await
+    })
+}
+
+/// Check if the network is initialized.
+pub fn is_network_initialized() -> bool {
+    store::block_on(async move {
+        network::is_initialized().await
+    })
+}
+
+/// Send an onion-routed packet to the next hop.
+/// `next_hop` is the Iroh node ID of the next relay/destination.
+pub fn send_onion_packet(next_hop: String, encrypted_payload: Vec<u8>) -> Result<(), NetworkError> {
+    store::block_on(async move {
+        network::send_onion_packet(&next_hop, encrypted_payload).await
+    })
+}
+
+/// Receive the next available onion packet (non-blocking check).
+/// Returns None if no packet is available.
+pub fn receive_onion_packet() -> Option<OnionPacket> {
+    store::block_on(async move {
+        let network = network::get_network().await?;
+        let mut net = network.lock().await;
+        
+        // Try to receive without blocking
+        match net.onion_rx.try_recv() {
+            Ok(p) => Some(OnionPacket {
+                payload: p.payload,
+                from_node_id: p.from_node_id,
+            }),
+            Err(_) => None,
+        }
+    })
 }

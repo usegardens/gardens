@@ -58,6 +58,8 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             cover_blob_id   TEXT,
             is_public       INTEGER NOT NULL DEFAULT 0,
             creator_key     TEXT NOT NULL,
+            org_pubkey      TEXT,              -- Org's public key (z32 encoded)
+            org_privkey_enc BLOB,              -- Org's private key (encrypted with user's key)
             created_at      INTEGER NOT NULL
         );
 
@@ -150,6 +152,26 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             topic_hex   TEXT PRIMARY KEY,
             last_seq    INTEGER NOT NULL DEFAULT 0
         );
+
+        -- Member moderation tables
+        CREATE TABLE IF NOT EXISTS org_bans (
+            org_id          TEXT NOT NULL,
+            member_key      TEXT NOT NULL,
+            banned_at       INTEGER NOT NULL,
+            banned_by       TEXT NOT NULL,
+            reason          TEXT,
+            PRIMARY KEY (org_id, member_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS org_mutes (
+            org_id          TEXT NOT NULL,
+            member_key      TEXT NOT NULL,
+            muted_at        INTEGER NOT NULL,
+            muted_by        TEXT NOT NULL,
+            expires_at      INTEGER NOT NULL,
+            reason          TEXT,
+            PRIMARY KEY (org_id, member_key)
+        );
         "#,
     )
     .execute(pool)
@@ -163,6 +185,14 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
     )
     .execute(pool)
     .await;
+
+    // Add org keypair columns (for org keypair feature)
+    let _ = sqlx::query("ALTER TABLE organizations ADD COLUMN org_pubkey TEXT")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE organizations ADD COLUMN org_privkey_enc BLOB")
+        .execute(pool)
+        .await;
 
     Ok(())
 }
@@ -271,6 +301,8 @@ pub struct OrgRow {
     pub cover_blob_id: Option<String>,
     pub is_public: i64,
     pub creator_key: String,
+    pub org_pubkey: Option<String>,      // Z32-encoded public key
+    pub org_privkey_enc: Option<Vec<u8>>, // Encrypted private key
     pub created_at: i64,
 }
 
@@ -364,15 +396,18 @@ pub async fn get_profile(pool: &SqlitePool, public_key: &str) -> Result<Option<P
 
 pub async fn insert_org(pool: &SqlitePool, row: &OrgRow) -> Result<(), DbError> {
     sqlx::query(
-        r#"INSERT INTO organizations (org_id, name, type_label, description, avatar_blob_id, cover_blob_id, is_public, creator_key, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO organizations (org_id, name, type_label, description, avatar_blob_id, cover_blob_id, is_public, creator_key, org_pubkey, org_privkey_enc, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(org_id) DO UPDATE SET
                name = excluded.name,
                type_label = excluded.type_label,
                description = excluded.description,
                avatar_blob_id = excluded.avatar_blob_id,
                cover_blob_id = excluded.cover_blob_id,
-               is_public = excluded.is_public"#,
+               is_public = excluded.is_public,
+               -- Preserve org keys: only update if new value is not NULL
+               org_pubkey = COALESCE(excluded.org_pubkey, organizations.org_pubkey),
+               org_privkey_enc = COALESCE(excluded.org_privkey_enc, organizations.org_privkey_enc)"#,
     )
     .bind(&row.org_id)
     .bind(&row.name)
@@ -382,6 +417,8 @@ pub async fn insert_org(pool: &SqlitePool, row: &OrgRow) -> Result<(), DbError> 
     .bind(&row.cover_blob_id)
     .bind(row.is_public as i64)
     .bind(&row.creator_key)
+    .bind(&row.org_pubkey)
+    .bind(&row.org_privkey_enc)
     .bind(row.created_at)
     .execute(pool)
     .await?;
@@ -465,10 +502,35 @@ pub async fn update_room(
     Ok(())
 }
 
+pub async fn get_org(pool: &SqlitePool, org_id: &str) -> Result<Option<OrgRow>, DbError> {
+    let row = sqlx::query(
+        "SELECT org_id, name, type_label, description, avatar_blob_id, cover_blob_id, \
+         is_public, creator_key, org_pubkey, org_privkey_enc, created_at \
+         FROM organizations WHERE org_id = ?"
+    )
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+    
+    Ok(row.map(|r| OrgRow {
+        org_id: r.get("org_id"),
+        name: r.get("name"),
+        type_label: r.get("type_label"),
+        description: r.get("description"),
+        avatar_blob_id: r.get("avatar_blob_id"),
+        cover_blob_id: r.get("cover_blob_id"),
+        is_public: r.get::<i64, _>("is_public"),
+        creator_key: r.get("creator_key"),
+        org_pubkey: r.get("org_pubkey"),
+        org_privkey_enc: r.get("org_privkey_enc"),
+        created_at: r.get("created_at"),
+    }))
+}
+
 pub async fn list_orgs_for_member(pool: &SqlitePool, member_key: &str) -> Result<Vec<OrgRow>, DbError> {
     let rows = sqlx::query(
         r#"SELECT o.org_id, o.name, o.type_label, o.description, o.avatar_blob_id, o.cover_blob_id,
-                  o.is_public, o.creator_key, o.created_at
+                  o.is_public, o.creator_key, o.org_pubkey, o.org_privkey_enc, o.created_at
            FROM organizations o
            JOIN memberships m ON m.org_id = o.org_id
            WHERE m.member_key = ?
@@ -489,6 +551,8 @@ pub async fn list_orgs_for_member(pool: &SqlitePool, member_key: &str) -> Result
             cover_blob_id: r.get("cover_blob_id"),
             is_public: r.get::<i64, _>("is_public"),
             creator_key: r.get("creator_key"),
+            org_pubkey: r.get("org_pubkey"),
+            org_privkey_enc: r.get("org_privkey_enc"),
             created_at: r.get("created_at"),
         })
         .collect())
@@ -515,6 +579,121 @@ pub async fn upsert_membership(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+// ─── Moderation ──────────────────────────────────────────────────────────────
+
+pub async fn ban_member(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+    banned_by: &str,
+    banned_at: i64,
+    reason: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"INSERT INTO org_bans (org_id, member_key, banned_at, banned_by, reason)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(org_id, member_key) DO UPDATE SET
+               banned_at = excluded.banned_at,
+               banned_by = excluded.banned_by,
+               reason = excluded.reason"#,
+    )
+    .bind(org_id)
+    .bind(member_key)
+    .bind(banned_at)
+    .bind(banned_by)
+    .bind(reason)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn unban_member(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM org_bans WHERE org_id = ? AND member_key = ?")
+        .bind(org_id)
+        .bind(member_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn is_banned(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+) -> Result<bool, DbError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM org_bans WHERE org_id = ? AND member_key = ?"
+    )
+    .bind(org_id)
+    .bind(member_key)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+pub async fn mute_member(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+    muted_by: &str,
+    muted_at: i64,
+    expires_at: i64,
+    reason: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"INSERT INTO org_mutes (org_id, member_key, muted_at, muted_by, expires_at, reason)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(org_id, member_key) DO UPDATE SET
+               muted_at = excluded.muted_at,
+               muted_by = excluded.muted_by,
+               expires_at = excluded.expires_at,
+               reason = excluded.reason"#,
+    )
+    .bind(org_id)
+    .bind(member_key)
+    .bind(muted_at)
+    .bind(muted_by)
+    .bind(expires_at)
+    .bind(reason)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn unmute_member(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM org_mutes WHERE org_id = ? AND member_key = ?")
+        .bind(org_id)
+        .bind(member_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn is_muted(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+    now: i64,
+) -> Result<bool, DbError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM org_mutes WHERE org_id = ? AND member_key = ? AND expires_at > ?"
+    )
+    .bind(org_id)
+    .bind(member_key)
+    .bind(now)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
 }
 
 // ─── Room ────────────────────────────────────────────────────────────────────

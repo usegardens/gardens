@@ -2,8 +2,10 @@
  * Delta Sync Worker
  *
  * Endpoints:
- *   GET  /topic/<topic-hex>?since=<seq>  — WebSocket upgrade to TopicDO
- *   POST /deliver                         — from Relay Worker (service binding)
+ *   GET  /topic/<topic-hex>?since=<seq>       — WebSocket upgrade to TopicDO
+ *   POST /deliver                             — from Relay Worker (service binding)
+ *   GET  /topic/<topic-hex>/blobs/<hash>      — fetch blob
+ *   PUT  /topic/<topic-hex>/blobs/<hash>      — store blob
  */
 
 import { TopicDO } from './topic-do';
@@ -19,7 +21,7 @@ export default {
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean);
 
-    // GET /topic/<topic-hex>
+    // GET /topic/<topic-hex> or /topic/<topic-hex>/blobs/<hash>
     if (parts[0] === 'topic' && parts[1]) {
       const topicHex = parts[1];
       if (!/^[0-9a-f]{64}$/i.test(topicHex)) {

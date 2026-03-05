@@ -8,7 +8,7 @@ namespace delta_core {
 
     // ── Phase 2: Core init ─────────────────────────────────────────────────
     [Throws=CoreError]
-    void init_core(string private_key_hex, string db_dir, sequence<BootstrapNode> bootstrap_nodes);
+    void init_core(string private_key_hex, string db_dir);
 
     // ── Phase 2: Profile ───────────────────────────────────────────────────
     [Throws=CoreError]
@@ -35,6 +35,25 @@ namespace delta_core {
         boolean? is_public
     );
 
+    [Throws=CoreError]
+    void delete_org(string org_id);
+
+    // Member moderation (stubs)
+    [Throws=AuthError]
+    void kick_member(string org_id, string member_public_key);
+
+    [Throws=AuthError]
+    void ban_member(string org_id, string member_public_key);
+
+    [Throws=AuthError]
+    void unban_member(string org_id, string member_public_key);
+
+    [Throws=AuthError]
+    void mute_member(string org_id, string member_public_key, i64 duration_seconds);
+
+    [Throws=AuthError]
+    void unmute_member(string org_id, string member_public_key);
+
     // ── Phase 2: Rooms ─────────────────────────────────────────────────────
     [Throws=CoreError]
     string create_room(string org_id, string name);
@@ -55,7 +74,7 @@ namespace delta_core {
 
     // ── Phase 2: Messages ──────────────────────────────────────────────────
     [Throws=CoreError]
-    string send_message(
+    SendResult send_message(
         string? room_id,
         string? dm_thread_id,
         string content_type,
@@ -73,26 +92,31 @@ namespace delta_core {
         i64? before_timestamp
     );
 
+    /// Delete a message. The user can delete their own messages, or
+    /// any message if they have Manage permission in the org.
+    [Throws=CoreError]
+    SendResult delete_message(string message_id, string? org_id);
+
     // ── Phase 2: DM Threads ────────────────────────────────────────────────
     [Throws=CoreError]
-    string create_dm_thread(string recipient_key);
+    SendResult create_dm_thread(string recipient_key);
 
     sequence<DmThread> list_dm_threads();
 
     // ── Phase 3: Networking ────────────────────────────────────────────────
     ConnectionStatus get_connection_status();
 
-    [Throws=CoreError]
-    void subscribe_room_topic(string room_id);
-
-    [Throws=CoreError]
-    void subscribe_dm_topic(string thread_id);
-
     sequence<OrgSummary> search_public_orgs(string query);
 
     // ── pkarr public profiles ─────────────────────────────────────────────────
     [Throws=CoreError]
     string get_pkarr_url(string public_key_hex);
+
+    /// Get pkarr URL from a z32-encoded public key (for orgs).
+    /// Input: z32-encoded key (e.g., "yj4bqhvahk8dge...")
+    /// Returns: `pk:<z32-encoded-pubkey>`
+    [Throws=CoreError]
+    string get_pkarr_url_from_z32(string z32_key);
 
     [Throws=CoreError]
     PkarrResolved? resolve_pkarr(string z32_key);
@@ -130,12 +154,37 @@ namespace delta_core {
 
     sequence<MemberInfo> list_org_members(string org_id);
 
+    // ── Org Key Transfer ───────────────────────────────────────────────────
+
+    /// Transfer org ownership to a new owner.
+    /// Returns base64-encoded encrypted payload that the new owner must pass to accept_org_transfer.
+    [Throws=AuthError]
+    string transfer_org_ownership(string org_id, string new_owner_pubkey_hex);
+
+    /// Accept org ownership transfer.
+    /// Decrypts the transferred key and stores it encrypted with the new owner's key.
+    [Throws=AuthError]
+    void accept_org_transfer(string org_id, string transfer_payload_base64, string previous_owner_pubkey_hex);
+
     // ── Phase 7: Blobs ─────────────────────────────────────────────────────
     [Throws=BlobError]
     string upload_blob(bytes data, string mime_type, string? room_id);
 
     [Throws=BlobError]
-    bytes get_blob(string blob_hash);
+    bytes get_blob(string blob_hash, string? room_id);
+
+    /// Check if we have a blob locally (for P2P availability checks).
+    [Throws=BlobError]
+    boolean has_blob(string blob_hash);
+
+    /// Request a blob from a peer via P2P onion routing.
+    /// Returns the blob bytes if successful, or null if timeout/peer doesn't have it.
+    [Throws=BlobError]
+    bytes? request_blob_from_peer(string blob_hash, string peer_public_key);
+
+    /// Provide (send) a blob to a peer who requested it via P2P.
+    [Throws=BlobError]
+    void provide_blob_to_peer(string blob_hash, string peer_public_key);
 
     // ── Onion routing ──────────────────────────────────────────────────────
     [Throws=OnionError]
@@ -154,6 +203,31 @@ namespace delta_core {
 
     [Throws=SyncFfiError]
     i64 get_topic_seq_ffi(string topic_hex);
+
+    // ── Sync Configuration ─────────────────────────────────────────────────
+    void init_sync(sequence<SyncHopFfi> hops, string sync_url);
+    sequence<SyncHopFfi> get_relay_hops();
+    string get_sync_url();
+
+    // ── Network / Iroh P2P ─────────────────────────────────────────────────
+    /// Initialize the Iroh P2P network stack. Must be called after init_core().
+    /// Returns the node ID as a string.
+    [Throws=NetworkError]
+    string init_network(string? relay_url);
+
+    /// Get the current node's Iroh node ID.
+    [Throws=NetworkError]
+    string get_node_id();
+
+    /// Check if the network is initialized.
+    boolean is_network_initialized();
+
+    /// Send an onion-routed packet to the next hop.
+    [Throws=NetworkError]
+    void send_onion_packet(string next_hop, bytes encrypted_payload);
+
+    /// Receive the next available onion packet (non-blocking check).
+    OnionPacket? receive_onion_packet();
 };
 
 // ── Phase 1 types ─────────────────────────────────────────────────────────────
@@ -212,6 +286,7 @@ dictionary OrgSummary {
     string? cover_blob_id;
     boolean is_public;
     string creator_key;
+    string? org_pubkey;  // Z32-encoded org public key for pkarr
     i64 created_at;
 };
 
@@ -250,17 +325,19 @@ dictionary DmThread {
     i64? last_message_at;
 };
 
+/// Returned by send_message and create_dm_thread.
+/// op_bytes is the GossipEnvelope CBOR — the app forwards it via onion routing.
+dictionary SendResult {
+    string id;       // message_id or thread_id (op hash hex)
+    bytes op_bytes;  // GossipEnvelope CBOR bytes for onion delivery
+};
+
 // ── Phase 3 types ─────────────────────────────────────────────────────────────
 
 enum ConnectionStatus {
     "Online",
     "Connecting",
     "Offline",
-};
-
-dictionary BootstrapNode {
-    string node_id_hex;
-    string relay_url;
 };
 
 // ── Phase 5 types ─────────────────────────────────────────────────────────────
@@ -291,9 +368,12 @@ dictionary MemberInfo {
 [Error]
 enum BlobError {
     "NotInitialized",
+    "NetworkNotInitialized",
     "NotFound",
     "StoreError",
     "IoError",
+    "EncryptionError",
+    "ConnectionFailed",
 };
 
 // ── Onion routing types ───────────────────────────────────────────────────────
@@ -322,7 +402,30 @@ enum OnionError {
     "InvalidKey",
 };
 
+// ── Sync Configuration types ─────────────────────────────────────────────────
+
+dictionary SyncHopFfi {
+    string pubkey_hex;
+    string next_url;
+};
+
 // ── Sync types ────────────────────────────────────────────────────────────────
 
 [Error]
 enum SyncFfiError { "Error" };
+
+// ── Network types ─────────────────────────────────────────────────────────────
+
+[Error]
+enum NetworkError {
+    "NotInitialized",
+    "ConnectionFailed",
+    "ProtocolError",
+    "StreamError",
+    "IoError",
+};
+
+dictionary OnionPacket {
+    bytes payload;
+    string from_node_id;
+};

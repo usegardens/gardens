@@ -225,6 +225,8 @@ async fn project_org(
             cover_blob_id: op.cover_blob_id,
             is_public: op.is_public as i64,
             creator_key: author_key.to_string(),
+            org_pubkey: None,  // Set by creator after org creation
+            org_privkey_enc: None,  // Set by creator after org creation
             created_at: now,
         },
     )

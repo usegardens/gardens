@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import type { Message } from '../stores/useMessagesStore';
 import { BlobImage } from './BlobImage';
+import { BlobVideo } from './BlobVideo';
 import { getBlob } from '../ffi/deltaCore';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import { MessageText, extractUrls } from './MessageText';
@@ -33,6 +34,7 @@ function Avatar({
     return (
       <BlobImage
         blobHash={avatarBlobId}
+        roomId={null}
         style={[styles.avatar, { borderRadius: 18 }]}
       />
     );
@@ -45,7 +47,7 @@ function Avatar({
   );
 }
 
-function AudioMessage({ blobHash }: { blobHash: string }) {
+function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string | null }) {
   const [playing, setPlaying] = useState(false);
   const playerRef = React.useRef<AudioRecorderPlayer | null>(null);
 
@@ -56,7 +58,7 @@ function AudioMessage({ blobHash }: { blobHash: string }) {
       setPlaying(false);
     } else {
       try {
-        const bytes = await getBlob(blobHash);
+        const bytes = await getBlob(blobHash, roomId);
         const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join('');
         const uri = `data:audio/m4a;base64,${btoa(binary)}`;
         const player = new AudioRecorderPlayer();
@@ -171,19 +173,19 @@ export function ChannelMessage({
         })()}
 
         {message.contentType === 'image' && message.blobId && (
-          <BlobImage blobHash={message.blobId} style={styles.media} />
+          <BlobImage blobHash={message.blobId} roomId={message.roomId ?? null} style={styles.media} />
         )}
 
         {message.contentType === 'audio' && message.blobId && (
-          <AudioMessage blobHash={message.blobId} />
+          <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? null} />
         )}
 
         {message.contentType === 'gif' && message.embedUrl && (
           <Image source={{ uri: message.embedUrl }} style={styles.media} resizeMode="cover" />
         )}
 
-        {message.contentType === 'video' && message.blobId && (
-          <BlobImage blobHash={message.blobId} style={styles.media} mimeType="image/jpeg" />
+        {message.contentType === 'video' && message.blobId && message.roomId && (
+          <BlobVideo blobHash={message.blobId} topicHex={message.roomId} style={styles.media} />
         )}
 
         {message.editedAt && <Text style={styles.edited}>(edited)</Text>}

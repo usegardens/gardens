@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import type { Message } from '../stores/useMessagesStore';
 import { BlobImage } from './BlobImage';
+import { BlobVideo } from './BlobVideo';
 import { getBlob } from '../ffi/deltaCore';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 
@@ -13,7 +14,7 @@ interface Props {
   onLongPress?: () => void;
 }
 
-function AudioMessage({ blobHash }: { blobHash: string }) {
+function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string | null }) {
   const [playing, setPlaying] = useState(false);
   const playerRef = React.useRef<AudioRecorderPlayer | null>(null);
 
@@ -24,7 +25,7 @@ function AudioMessage({ blobHash }: { blobHash: string }) {
       setPlaying(false);
     } else {
       try {
-        const bytes = await getBlob(blobHash);
+        const bytes = await getBlob(blobHash, roomId);
         const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join('');
         const uri = `data:audio/m4a;base64,${btoa(binary)}`;
         const player = new AudioRecorderPlayer();
@@ -89,12 +90,13 @@ export function MessageBubble({ message, isOwnMessage, onReply, onLongPress }: P
         {message.contentType === 'image' && message.blobId && (
           <BlobImage
             blobHash={message.blobId}
+            roomId={message.roomId ?? null}
             style={styles.mediaBlobImage}
           />
         )}
 
         {message.contentType === 'audio' && message.blobId && (
-          <AudioMessage blobHash={message.blobId} />
+          <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? null} />
         )}
 
         {message.contentType === 'gif' && message.embedUrl && (
@@ -105,13 +107,8 @@ export function MessageBubble({ message, isOwnMessage, onReply, onLongPress }: P
           />
         )}
 
-        {message.contentType === 'video' && message.blobId && (
-          // Poster frame only — full video playback is a future enhancement.
-          <BlobImage
-            blobHash={message.blobId}
-            style={styles.mediaBlobImage}
-            mimeType="image/jpeg"
-          />
+        {message.contentType === 'video' && message.blobId && message.roomId && (
+          <BlobVideo blobHash={message.blobId} topicHex={message.roomId} style={styles.mediaBlobImage} />
         )}
 
         <View style={styles.footer}>

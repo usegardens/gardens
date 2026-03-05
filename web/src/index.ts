@@ -20,6 +20,23 @@ const app = new Hono<{ Bindings: Env }>();
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));
 
+// Debug endpoint to test pkarr resolution
+app.get('/debug/pkarr/:z32Key', async (c) => {
+  const z32Key = c.req.param('z32Key');
+  console.log(`[debug] Testing pkarr resolution for: ${z32Key}`);
+  
+  try {
+    const record = await resolvePkarr(z32Key);
+    if (!record) {
+      return c.json({ error: 'Not found', key: z32Key }, 404);
+    }
+    return c.json({ success: true, key: z32Key, record });
+  } catch (error) {
+    console.error(`[debug] Error resolving ${z32Key}:`, error);
+    return c.json({ error: String(error), key: z32Key }, 500);
+  }
+});
+
 // Resolve pkarr key and render profile page
 app.get('/pk:z32Key', async (c) => {
   const z32Key = c.req.param('z32Key');

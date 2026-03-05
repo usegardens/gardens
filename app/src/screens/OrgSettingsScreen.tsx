@@ -10,12 +10,47 @@ import {
   Alert,
   Share,
 } from 'react-native';
+import { SheetManager } from 'react-native-actions-sheet';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { MainStackParamList } from '../navigation/RootNavigator';
+import RNFS from 'react-native-fs';
 import { useOrgsStore } from '../stores/useOrgsStore';
-import { uploadBlob, getPkarrUrl } from '../ffi/deltaCore';
+import { uploadBlob, getPkarrUrl, getPkarrUrlFromZ32, listOrgMembers } from '../ffi/deltaCore';
 import { BlobImage } from '../components/BlobImage';
 import { PublicIdentityCard } from '../components/PublicIdentityCard';
+import { DefaultCoverShader } from '../components/DefaultCoverShader';
+
+// Helper to convert base64 to Uint8Array without atob
+function base64ToBytes(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+
+  const len = base64.length;
+  let padding = 0;
+  if (base64[len - 2] === '=') padding = 2;
+  else if (base64[len - 1] === '=') padding = 1;
+
+  const bytesLen = (len * 3 / 4) - padding;
+  const bytes = new Uint8Array(bytesLen);
+
+  let i = 0;
+  let j = 0;
+  while (i < len) {
+    const a = lookup[base64.charCodeAt(i++)];
+    const b = lookup[base64.charCodeAt(i++)];
+    const c = lookup[base64.charCodeAt(i++)];
+    const d = lookup[base64.charCodeAt(i++)];
+
+    bytes[j++] = (a << 2) | (b >> 4);
+    if (j < bytesLen) bytes[j++] = ((b & 15) << 4) | (c >> 2);
+    if (j < bytesLen) bytes[j++] = ((c & 3) << 6) | d;
+  }
+
+  return bytes;
+}
 
 // Image picker import - will be conditionally available
 let launchImageLibrary: any;
@@ -100,16 +135,19 @@ function ToggleRow({
   );
 }
 
-export function OrgSettingsScreen({ route }: Props) {
+export function OrgSettingsScreen({ route, navigation }: Props) {
   const { orgId, orgName } = route.params;
   const { orgs, updateOrg, fetchMyOrgs } = useOrgsStore();
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingIcon, setIsUploadingIcon] = useState(false);
   const [coverBlobId, setCoverBlobId] = useState<string | null>(null);
+  const [avatarBlobId, setAvatarBlobId] = useState<string | null>(null);
   const [isPublic, setIsPublic] = useState(false);
   const [pkarrUrl, setPkarrUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [memberCount, setMemberCount] = useState(0);
 
   // Get current org data
   const org = orgs.find(o => o.orgId === orgId);
@@ -117,20 +155,37 @@ export function OrgSettingsScreen({ route }: Props) {
   useEffect(() => {
     if (org) {
       setCoverBlobId(org.coverBlobId);
+      setAvatarBlobId(org.avatarBlobId);
       setIsPublic(org.isPublic);
       setLoading(false);
       
-      // Generate pkarr URL from creator key
-      if (org.creatorKey) {
-        try {
-          const url = getPkarrUrl(org.creatorKey);
-          setPkarrUrl(url);
-        } catch {
-          // Failed to get pkarr URL
+      // Generate pkarr URL from org's public key (z32 encoded)
+      try {
+        let url: string;
+        if (org.orgPubkey) {
+          url = getPkarrUrlFromZ32(org.orgPubkey);
+        } else {
+          url = getPkarrUrl(org.creatorKey);
         }
+        setPkarrUrl(url);
+      } catch {
+        // Failed to get pkarr URL
       }
+      
+      // Load member count
+      loadMemberCount();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org]);
+  
+  async function loadMemberCount() {
+    try {
+      const members = await listOrgMembers(orgId);
+      setMemberCount(members.length);
+    } catch {
+      // Failed to load member count
+    }
+  }
 
   const handleTogglePublic = async (value: boolean) => {
     setSaving(true);
@@ -203,18 +258,9 @@ export function OrgSettingsScreen({ route }: Props) {
   const uploadCoverPhoto = async (uri: string, mimeType: string) => {
     setIsUploading(true);
     try {
-      // Read file as base64
-      const response = await fetch(uri);
-      const blob = await response.blob();
-
-      // Convert blob to Uint8Array
-      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-      const uint8Array = new Uint8Array(arrayBuffer);
+      // Read file using react-native-fs (works for both local and remote URIs)
+      const base64Data = await RNFS.readFile(uri, 'base64');
+      const uint8Array = base64ToBytes(base64Data);
 
       // Upload blob
       const newBlobId = await uploadBlob(uint8Array, mimeType, null);
@@ -232,6 +278,113 @@ export function OrgSettingsScreen({ route }: Props) {
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const handleDeleteOrg = () => {
+    Alert.alert(
+      'Delete Organization',
+      `Are you sure you want to delete "${orgName}"? This action cannot be undone and all data will be permanently lost.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Final Confirmation',
+              `Type "${orgName}" to confirm deletion:`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Confirm Delete',
+                  style: 'destructive',
+                  onPress: async () => {
+                    Alert.alert(
+                      'Not Available',
+                      'Organization deletion is not yet available in this version. This feature will be implemented in a future update.'
+                    );
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEditOrg = () => {
+    SheetManager.show('edit-org-sheet', {
+      payload: {
+        orgId,
+        currentName: org?.name || orgName,
+        currentDescription: org?.description,
+        onSave: () => {
+          fetchMyOrgs();
+        },
+      },
+    });
+  };
+
+  const handleSelectIcon = async () => {
+    if (!launchImageLibrary) {
+      Alert.alert('Error', 'Image picker is not available');
+      return;
+    }
+
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'photo',
+        quality: 0.8,
+        maxWidth: 512,
+        maxHeight: 512,
+        selectionLimit: 1,
+      });
+
+      if (result.didCancel || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      if (!asset.uri) {
+        Alert.alert('Error', 'Could not get image URI');
+        return;
+      }
+
+      await uploadIcon(asset.uri, asset.type || 'image/jpeg');
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to select image');
+    }
+  };
+
+  const uploadIcon = async (uri: string, mimeType: string) => {
+    setIsUploadingIcon(true);
+    try {
+      // Read file using react-native-fs (works for both local and remote URIs)
+      const base64Data = await RNFS.readFile(uri, 'base64');
+      const uint8Array = base64ToBytes(base64Data);
+
+      // Upload blob
+      const newBlobId = await uploadBlob(uint8Array, mimeType, null);
+
+      // Update org with new avatar blob ID
+      await updateOrg(orgId, undefined, undefined, undefined, newBlobId, undefined, undefined);
+
+      // Refresh orgs to get updated data
+      await fetchMyOrgs();
+
+      setAvatarBlobId(newBlobId);
+      Alert.alert('Success', 'Organization icon updated');
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to upload icon');
+    } finally {
+      setIsUploadingIcon(false);
+    }
+  };
+
+  const handleNavigateToMembers = () => {
+    // @ts-ignore - navigation type not fully defined
+    navigation.navigate('MemberList', { orgId, orgName });
   };
 
   const handleRemoveCoverPhoto = async () => {
@@ -268,21 +421,33 @@ export function OrgSettingsScreen({ route }: Props) {
   return (
     <ScrollView style={s.root} contentContainerStyle={s.content}>
       {/* Cover Photo Preview */}
-      {coverBlobId && (
-        <View style={s.coverPreviewContainer}>
-          <BlobImage blobHash={coverBlobId} style={s.coverPreview} />
-          <TouchableOpacity
-            style={s.removeCoverBtn}
-            onPress={handleRemoveCoverPhoto}
-          >
-            <Text style={s.removeCoverText}>Remove</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      <View style={s.coverPreviewContainer}>
+        {coverBlobId ? (
+          <>
+            <BlobImage blobHash={coverBlobId} style={s.coverPreview} />
+            <TouchableOpacity
+              style={s.removeCoverBtn}
+              onPress={handleRemoveCoverPhoto}
+            >
+              <Text style={s.removeCoverText}>Remove</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <DefaultCoverShader width={400} height={120} />
+        )}
+      </View>
 
       <Section title="General">
-        <SettingsRow label="Organization Name" description={orgName} soon />
-        <SettingsRow label="Description" description="Add a description" soon />
+        <SettingsRow 
+          label="Organization Name" 
+          description={orgName}
+          onPress={handleEditOrg}
+        />
+        <SettingsRow 
+          label="Description" 
+          description={org?.description || 'Add a description'}
+          onPress={handleEditOrg}
+        />
         
         <ToggleRow
           label="Public Organization"
@@ -302,7 +467,7 @@ export function OrgSettingsScreen({ route }: Props) {
           <View style={s.cardContainer}>
             <PublicIdentityCard
               pkarrUrl={pkarrUrl}
-              publicKeyHex={org.creatorKey}
+              publicKeyHex={org.orgPubkey || org.creatorKey}
               label={orgName}
             />
             <TouchableOpacity style={s.shareBtn} onPress={handleShareCommunity}>
@@ -324,20 +489,36 @@ export function OrgSettingsScreen({ route }: Props) {
             <Text style={s.uploadingText}>Uploading...</Text>
           </View>
         )}
-        <SettingsRow label="Organization Icon" soon />
+        <SettingsRow 
+          label="Organization Icon" 
+          description={avatarBlobId ? 'Change icon' : 'Upload an icon'}
+          onPress={handleSelectIcon}
+        />
+        {isUploadingIcon && (
+          <View style={s.uploadingRow}>
+            <ActivityIndicator size="small" color="#888" />
+            <Text style={s.uploadingText}>Uploading icon...</Text>
+          </View>
+        )}
       </Section>
 
       <Section title="Members">
-        <SettingsRow label="Roles & Permissions" soon />
-        <SettingsRow label="Bans & Restrictions" soon />
+        <SettingsRow 
+          label="Roles & Permissions" 
+          description={`${memberCount} member${memberCount !== 1 ? 's' : ''}`}
+          onPress={handleNavigateToMembers}
+        />
+        <SettingsRow 
+          label="Bans & Restrictions" 
+          description="Manage banned users"
+          onPress={handleNavigateToMembers}
+        />
       </Section>
 
       <Section title="Danger Zone">
-        <TouchableOpacity style={s.dangerRow} disabled>
+        <TouchableOpacity style={s.dangerRow} onPress={handleDeleteOrg}>
           <Text style={s.dangerLabel}>Delete Organization</Text>
-          <View style={s.soonBadge}>
-            <Text style={s.soonText}>Soon</Text>
-          </View>
+          <Text style={s.chevron}>›</Text>
         </TouchableOpacity>
       </Section>
     </ScrollView>

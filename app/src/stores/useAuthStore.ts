@@ -11,7 +11,7 @@
 
 import { create } from 'zustand';
 import * as Keychain from 'react-native-keychain';
-import { generateKeypair, importFromMnemonic, initCore, type KeyPair } from '../ffi/deltaCore';
+import { generateKeypair, importFromMnemonic, initCore, initNetwork, type KeyPair } from '../ffi/deltaCore';
 
 const KEYCHAIN_SERVICE = 'delta.privateKey';
 const PUBKEY_SERVICE   = 'delta.publicKey';
@@ -58,6 +58,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const kp = await generateKeypair();
     await persistKeypair(kp);
     await initCore(kp.privateKeyHex);
+    await initNetwork(null);
     set({ keypair: kp, isUnlocked: true });
     return kp;
   },
@@ -66,6 +67,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const kp = await importFromMnemonic(words);
     await persistKeypair(kp);
     await initCore(kp.privateKeyHex);
+    await initNetwork(null);
     set({ keypair: kp, isUnlocked: true });
     return kp;
   },
@@ -93,6 +95,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         mnemonic:      mnResult  ? mnResult.password  : '',
       };
       await initCore(kp.privateKeyHex);
+      await initNetwork(null);
       set({ keypair: kp, isUnlocked: true });
       return true;
     } catch {

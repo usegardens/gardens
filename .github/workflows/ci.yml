@@ -39,3 +39,20 @@ jobs:
       - name: TypeScript check
         working-directory: app
         run: npx tsc --noEmit
+
+  sync-worker:
+    name: Sync Worker (DO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sync/package-lock.json
+      - name: Install dependencies
+        working-directory: sync
+        run: npm install
+      - name: Run tests
+        working-directory: sync
+        run: npx vitest run

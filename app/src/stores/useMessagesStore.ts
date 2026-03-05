@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { sendMessage as nativeSendMessage, listMessages } from '../ffi/deltaCore';
+import { sendMessage as nativeSendMessage, listMessages, deleteMessage as nativeDeleteMessage } from '../ffi/deltaCore';
 
 export interface Message {
   messageId: string;
@@ -39,6 +39,8 @@ interface MessagesState {
     mentions?: string[];
     replyTo?: string;
   }): Promise<string>;
+
+  deleteMessage(messageId: string, orgId?: string): Promise<void>;
 }
 
 const contextKey = (roomId: string | null, dmThreadId: string | null): ContextKey =>
@@ -60,7 +62,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
   },
 
   async sendMessage({ roomId, dmThreadId, contentType, textContent, blobId, embedUrl, mentions = [], replyTo }) {
-    const messageId = await nativeSendMessage(
+    const result = await nativeSendMessage(
       roomId ?? null,
       dmThreadId ?? null,
       contentType,
@@ -70,6 +72,20 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       mentions,
       replyTo ?? null,
     );
-    return messageId;
+    return result.id;
+  },
+
+  async deleteMessage(messageId, orgId) {
+    await nativeDeleteMessage(messageId, orgId);
+    // Optimistically update local state
+    set(s => {
+      const updatedMessages: Record<string, Message[]> = {};
+      for (const key of Object.keys(s.messages)) {
+        updatedMessages[key] = s.messages[key].map(msg =>
+          msg.messageId === messageId ? { ...msg, isDeleted: true } : msg
+        );
+      }
+      return { messages: updatedMessages };
+    });
   },
 }));

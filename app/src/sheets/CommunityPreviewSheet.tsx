@@ -8,9 +8,9 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { resolvePkarr } from '../ffi/deltaCore';
 import { BlobImage } from '../components/BlobImage';
+import { DefaultCoverShader } from '../components/DefaultCoverShader';
 
 interface Props {
   visible: boolean;
@@ -19,7 +19,6 @@ interface Props {
 }
 
 export function CommunityPreviewSheet({ visible, pkarrUrl, onClose }: Props) {
-  const navigation = useNavigation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [orgData, setOrgData] = useState<{
@@ -131,9 +130,7 @@ export function CommunityPreviewSheet({ visible, pkarrUrl, onClose }: Props) {
                 {orgData.coverBlobId ? (
                   <BlobImage blobHash={orgData.coverBlobId} style={s.coverImage} />
                 ) : (
-                  <View style={[s.coverImage, s.coverPlaceholder]}>
-                    <Text style={s.coverPlaceholderText}>🌐</Text>
-                  </View>
+                  <DefaultCoverShader width={350} height={140} />
                 )}
                 
                 {/* Avatar */}
@@ -252,14 +249,7 @@ const s = StyleSheet.create({
     height: 140,
     borderRadius: 12,
   },
-  coverPlaceholder: {
-    backgroundColor: '#1e1e1e',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  coverPlaceholderText: {
-    fontSize: 48,
-  },
+
   avatarContainer: {
     position: 'absolute',
     bottom: -30,

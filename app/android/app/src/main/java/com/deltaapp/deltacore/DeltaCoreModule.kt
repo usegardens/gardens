@@ -13,9 +13,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import uniffi.delta_core.BootstrapNode
 import uniffi.delta_core.OnionHopFfi
 import uniffi.delta_core.OrgSummary
+import uniffi.delta_core.SyncHopFfi
 
 @ReactModule(name = "DeltaCore")
 class DeltaCoreModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -85,22 +85,56 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
   // ── Phase 3 / Core init ─────────────────────────────────────────────────────
 
   @ReactMethod
-  fun initCore(privateKeyHex: String, dbDir: String, bootstrap: ReadableArray, promise: Promise) {
+  fun initCore(privateKeyHex: String, dbDir: String, promise: Promise) {
     ensureLoaded()
-    val nodes = (0 until bootstrap.size()).map { idx ->
-      val m = bootstrap.getMap(idx)!!
-      BootstrapNode(
-        nodeIdHex = m.getString("nodeIdHex")!!,
-        relayUrl = m.getString("relayUrl")!!,
-      )
-    }
     val resolvedDbDir = reactContext.filesDir.also { it.mkdirs() }.absolutePath
     scope.launch {
       try {
-        uniffi.delta_core.initCore(privateKeyHex, resolvedDbDir, nodes)
+        uniffi.delta_core.initCore(privateKeyHex, resolvedDbDir)
         promise.resolve(null)
       } catch (e: Exception) {
         promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  // ── Network / Iroh P2P ─────────────────────────────────────────────────────
+
+  @ReactMethod
+  fun initNetwork(relayUrl: String?, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val nodeId = uniffi.delta_core.initNetwork(relayUrl)
+        promise.resolve(nodeId)
+      } catch (e: Exception) {
+        promise.reject("NetworkError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun isNetworkInitialized(promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val ok = uniffi.delta_core.isNetworkInitialized()
+        promise.resolve(ok)
+      } catch (e: Exception) {
+        promise.reject("NetworkError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getNodeId(promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val nodeId = uniffi.delta_core.getNodeId()
+        promise.resolve(nodeId)
+      } catch (e: Exception) {
+        promise.reject("NetworkError", e)
       }
     }
   }
@@ -198,6 +232,12 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
   fun getPkarrUrl(publicKeyHex: String): String {
     ensureLoaded()
     return uniffi.delta_core.getPkarrUrl(publicKeyHex)
+  }
+
+  @ReactMethod(isBlockingSynchronousMethod = true)
+  fun getPkarrUrlFromZ32(z32Key: String): String {
+    ensureLoaded()
+    return uniffi.delta_core.getPkarrUrlFromZ32(z32Key)
   }
 
   @ReactMethod
@@ -400,10 +440,13 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
     val mentionsList = (0 until mentions.size()).map { mentions.getString(it)!! }
     scope.launch {
       try {
-        val messageId = uniffi.delta_core.sendMessage(
+        val result = uniffi.delta_core.sendMessage(
           roomId, dmThreadId, contentType, textContent, blobId, embedUrl, mentionsList, replyTo
         )
-        promise.resolve(messageId)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
       } catch (e: Exception) {
         promise.reject("CoreError", e)
       }
@@ -450,6 +493,22 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
     }
   }
 
+  @ReactMethod
+  fun deleteMessage(messageId: String, orgId: String?, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.delta_core.deleteMessage(messageId, orgId)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
   // ── DM threads ────────────────────────────────────────────────────────────────
 
   @ReactMethod
@@ -457,8 +516,11 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
     ensureLoaded()
     scope.launch {
       try {
-        val threadId = uniffi.delta_core.createDmThread(recipientKey)
-        promise.resolve(threadId)
+        val result = uniffi.delta_core.createDmThread(recipientKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
       } catch (e: Exception) {
         promise.reject("CoreError", e)
       }
@@ -488,30 +550,31 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
     }
   }
 
-  // ── Subscriptions ─────────────────────────────────────────────────────────────
+  // ── Sync ─────────────────────────────────────────────────────────────────────
 
   @ReactMethod
-  fun subscribeRoomTopic(roomId: String, promise: Promise) {
+  fun ingestOpFfi(topicHex: String, seq: Double, opBase64: String, promise: Promise) {
     ensureLoaded()
     scope.launch {
       try {
-        uniffi.delta_core.subscribeRoomTopic(roomId)
+        val opBytes = Base64.decode(opBase64, Base64.DEFAULT)
+        uniffi.delta_core.ingestOpFfi(topicHex, seq.toLong(), opBytes)
         promise.resolve(null)
       } catch (e: Exception) {
-        promise.reject("CoreError", e)
+        promise.reject("SyncFfiError", e)
       }
     }
   }
 
   @ReactMethod
-  fun subscribeDmTopic(threadId: String, promise: Promise) {
+  fun getTopicSeqFfi(topicHex: String, promise: Promise) {
     ensureLoaded()
     scope.launch {
       try {
-        uniffi.delta_core.subscribeDmTopic(threadId)
-        promise.resolve(null)
+        val seq = uniffi.delta_core.getTopicSeqFfi(topicHex)
+        promise.resolve(seq.toDouble())
       } catch (e: Exception) {
-        promise.reject("CoreError", e)
+        promise.reject("SyncFfiError", e)
       }
     }
   }
@@ -615,11 +678,11 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
   }
 
   @ReactMethod
-  fun getBlob(blobHash: String, promise: Promise) {
+  fun getBlob(blobHash: String, roomId: String?, promise: Promise) {
     ensureLoaded()
     scope.launch {
       try {
-        val bytes = uniffi.delta_core.getBlob(blobHash)
+        val bytes = uniffi.delta_core.getBlob(blobHash, roomId)
         val base64 = Base64.encodeToString(bytes, Base64.DEFAULT)
         promise.resolve(base64)
       } catch (e: Exception) {
@@ -684,6 +747,61 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
     }
   }
 
+  // ── Sync Configuration ────────────────────────────────────────────────────────
+
+  @ReactMethod
+  fun initSync(hopsArray: ReadableArray, syncUrl: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val hops = (0 until hopsArray.size()).map { i ->
+          val map = hopsArray.getMap(i)!!
+          SyncHopFfi(
+            pubkeyHex = map.getString("pubkeyHex")!!,
+            nextUrl   = map.getString("nextUrl")!!,
+          )
+        }
+        uniffi.delta_core.initSync(hops, syncUrl)
+        promise.resolve(null)
+      } catch (e: Exception) {
+        promise.reject("SyncConfigError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getRelayHops(promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val hops = uniffi.delta_core.getRelayHops()
+        val arr = Arguments.createArray()
+        for (h in hops) {
+          val map = Arguments.createMap()
+          map.putString("pubkeyHex", h.pubkeyHex)
+          map.putString("nextUrl", h.nextUrl)
+          arr.pushMap(map)
+        }
+        promise.resolve(arr)
+      } catch (e: Exception) {
+        promise.reject("SyncConfigError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getSyncUrl(promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val url = uniffi.delta_core.getSyncUrl()
+        promise.resolve(url)
+      } catch (e: Exception) {
+        promise.reject("SyncConfigError", e)
+      }
+    }
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   private fun orgsToWritableArray(orgs: List<OrgSummary>) = Arguments.createArray().also { arr ->
@@ -697,6 +815,7 @@ class DeltaCoreModule(private val reactContext: ReactApplicationContext) : React
       o.coverBlobId?.let { map.putString("coverBlobId", it) } ?: map.putNull("coverBlobId")
       map.putBoolean("isPublic", o.isPublic)
       map.putString("creatorKey", o.creatorKey)
+      o.orgPubkey?.let { map.putString("orgPubkey", it) } ?: map.putNull("orgPubkey")
       map.putDouble("createdAt", o.createdAt.toDouble())
       arr.pushMap(map)
     }

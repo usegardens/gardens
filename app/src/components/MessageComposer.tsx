@@ -11,8 +11,41 @@ import {
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
-import { uploadBlob } from '../ffi/deltaCore';
+import RNFS from 'react-native-fs';
+import { uploadBlob, initNetwork, isNetworkInitialized } from '../ffi/deltaCore';
 import { GifSearchModal } from './GifSearchModal';
+
+// Helper to convert base64 to Uint8Array without atob
+function base64ToBytes(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+
+  const len = base64.length;
+  let padding = 0;
+  if (base64[len - 2] === '=') padding = 2;
+  else if (base64[len - 1] === '=') padding = 1;
+
+  const bytesLen = (len * 3 / 4) - padding;
+  const bytes = new Uint8Array(bytesLen);
+
+  let i = 0;
+  let j = 0;
+  while (i < len) {
+    const a = lookup[base64.charCodeAt(i++)];
+    const b = lookup[base64.charCodeAt(i++)];
+    const c = lookup[base64.charCodeAt(i++)];
+    const d = lookup[base64.charCodeAt(i++)];
+
+    bytes[j++] = (a << 2) | (b >> 4);
+    if (j < bytesLen) bytes[j++] = ((b & 15) << 4) | (c >> 2);
+    if (j < bytesLen) bytes[j++] = ((c & 3) << 6) | d;
+  }
+
+  return bytes;
+}
 
 const audioRecorderPlayer = new AudioRecorderPlayer();
 
@@ -51,21 +84,56 @@ export function MessageComposer({
   }
 
   async function pickMedia() {
-    const result = await launchImageLibrary({ mediaType: 'mixed', includeBase64: false });
-    const asset = result.assets?.[0];
-    if (!asset || !asset.uri) return;
+    try {
+      const ok = await isNetworkInitialized();
+      if (!ok) await initNetwork(null);
+      const result = await launchImageLibrary({ 
+        mediaType: 'mixed', 
+        includeBase64: true,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        quality: 0.8,
+      });
+      const asset = result.assets?.[0];
+      if (!asset) return;
 
-    const isVideo = asset.type?.startsWith('video') ?? false;
-    const mimeType = asset.type ?? (isVideo ? 'video/mp4' : 'image/jpeg');
-    const contentType: 'image' | 'video' = isVideo ? 'video' : 'image';
+      const isVideo = asset.type?.startsWith('video') ?? false;
+      const mimeType = asset.type ?? (isVideo ? 'video/mp4' : 'image/jpeg');
+      const contentType: 'image' | 'video' = isVideo ? 'video' : 'image';
 
-    // Read bytes via fetch (works for both file:// and ph:// URIs on RN).
-    const resp = await fetch(asset.uri);
-    const buf = await resp.arrayBuffer();
-    const bytes = new Uint8Array(buf);
+      let bytes: Uint8Array;
 
-    const blobId = await uploadBlob(bytes, mimeType, roomId);
-    onSendBlob?.(blobId, mimeType, contentType);
+      if (asset.base64) {
+        // Use base64 data directly (works on both platforms)
+        bytes = base64ToBytes(asset.base64);
+      } else if (asset.uri) {
+        // Fallback to react-native-fs if no base64 (handles file:// URIs properly)
+        try {
+          const base64Data = await RNFS.readFile(asset.uri, 'base64');
+          bytes = base64ToBytes(base64Data);
+        } catch (readErr) {
+          console.error('Failed to read image file:', readErr);
+          throw new Error('Failed to read image file');
+        }
+      } else {
+        throw new Error('No image data available');
+      }
+
+      const blobId = await uploadBlob(bytes, mimeType, roomId);
+
+      // Blob is stored in the core's P2P blob store
+      if (roomId) {
+        // Placeholder for future holder registration if needed
+        console.log(`[upload] Registering blob ${blobId} holder for topic ${roomId}`);
+      } else {
+        console.warn('[upload] No roomId available, skipping holder registration');
+      }
+      
+      onSendBlob?.(blobId, mimeType, contentType);
+    } catch (err: any) {
+      console.error('Error sending media:', err);
+      // Could show an error toast here
+    }
   }
 
   async function startRecording() {
@@ -83,6 +151,8 @@ export function MessageComposer({
     if (!recordingRef.current) return;
     recordingRef.current = false;
     try {
+      const ok = await isNetworkInitialized();
+      if (!ok) await initNetwork(null);
       const uri = await audioRecorderPlayer.stopRecorder();
       if (!uri) return;
       const resp = await fetch(uri);

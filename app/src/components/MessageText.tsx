@@ -1,8 +1,9 @@
 import React from 'react';
 import { Text, Linking, StyleSheet } from 'react-native';
 
-// Combined regex: URLs first (greedy), then @mentions, then #channels
-const TOKEN_RE = /(https?:\/\/\S+?)(?=[.,!?)>\s]|$)|@(\w+)|#([\w-]+)/g;
+// Combined regex: URLs first, then @mentions, then #channels
+// URL regex uses greedy matching to capture full URLs
+const TOKEN_RE = /(https?:\/\/[^\s]+)(?=[.,!?)">\s]|$)|@(\w+)|#([\w-]+)/g;
 
 type Segment =
   | { kind: 'text'; content: string }

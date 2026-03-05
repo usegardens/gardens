@@ -66,6 +66,8 @@ pub struct DeltaCore {
     pub op_store: Mutex<DeltaStore>,
     pub read_pool: SqlitePool,
     pub blob_store: std::path::PathBuf,
+    /// Database directory path for network initialization
+    pub db_path: String,
 }
 
 static CORE: OnceLock<DeltaCore> = OnceLock::new();
@@ -103,11 +105,9 @@ pub async fn init_read_pool(db_dir: &str) -> Result<SqlitePool, StoreError> {
 ///
 /// * `private_key_hex` — 64 hex chars from iOS Keychain / Android Keystore.
 /// * `db_dir` — writable directory path for SQLite files.
-/// * `bootstrap_nodes` — relay nodes to connect to on startup.
 pub async fn bootstrap(
     private_key_hex: &str,
     db_dir: &str,
-    bootstrap_nodes: Vec<crate::BootstrapNode>,
 ) -> Result<(), StoreError> {
     if CORE.get().is_some() {
         return Ok(()); // already initialised; idempotent
@@ -142,22 +142,13 @@ pub async fn bootstrap(
         op_store: Mutex::new(op_store),
         read_pool: read_pool.clone(),
         blob_store: blob_path,
+        db_path: db_dir.to_string(),
     };
 
     CORE.set(core).map_err(|_| StoreError::AlreadyInit)?;
 
     // Spawn the projector.
     tokio::spawn(crate::projector::run_projector(read_pool.clone()));
-
-    // Bring up the network node.
-    crate::network::init_network(
-        private_key_hex,
-        db_dir,
-        bootstrap_nodes,
-        &read_pool,
-    )
-    .await
-    .map_err(|e| StoreError::Init(e.to_string()))?;
 
     // Initialize encryption subsystem (Phase 4)
     crate::encryption::init_encryption(private_key_hex.to_string(), read_pool.clone())

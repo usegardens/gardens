@@ -13,3 +13,8 @@ crons = ["0 * * * *"]   # publish pkarr record every hour
 [[services]]
 binding = "SYNC"
 service = "delta-sync"
+
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true

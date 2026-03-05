@@ -8,15 +8,16 @@ import {
   Alert,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { MainStackParamList } from '../navigation/RootNavigator';
 import NfcManager, { NfcTech, Ndef } from 'react-native-nfc-manager';
 import { verifyInviteToken } from '../ffi/deltaCore';
 
-type Props = NativeStackScreenProps<any, 'AddMember'>;
+type Props = NativeStackScreenProps<MainStackParamList, 'AddMember'>;
 
 const ACCESS_LEVELS = ['Pull', 'Read', 'Write', 'Manage'];
 
 export function AddMemberScreen({ route, navigation }: Props) {
-  const { orgId } = route.params as { orgId: string };
+  const { orgId } = route.params;
   const [nfcSupported, setNfcSupported] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState('Read');

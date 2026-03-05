@@ -12,7 +12,7 @@ import dns from 'dns-packet';
 import z32 from 'z32';
 import { hexToBytes, bytesToHex } from './crypto';
 
-const PKARR_RELAY = 'https://relay.pkarr.org';
+const PKARR_RELAY = 'https://pkarr.pubky.org';
 
 /**
  * Build a relay TXT record string.

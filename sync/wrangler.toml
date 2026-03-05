@@ -10,3 +10,8 @@ class_name = "TopicDO"
 [[migrations]]
 tag = "v1"
 new_classes = ["TopicDO"]
+
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true

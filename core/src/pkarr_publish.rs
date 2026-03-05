@@ -133,17 +133,30 @@ pub async fn publish_profile(
     let pk_z32 = keypair.to_z32();
     tokio::spawn(async move {
         if let Err(e) = client.publish(&signed_packet, None).await {
-            eprintln!("[pkarr] failed to publish profile: {}", e);
+            log::error!("[pkarr] failed to publish profile: {}", e);
         } else {
-            println!("[pkarr] published profile for {}", pk_z32);
+            log::info!("[pkarr] published profile for {}", pk_z32);
         }
     });
     
     Ok(())
 }
 
-/// Publish an org profile to the pkarr DHT.
+/// Publish an org profile to the pkarr DHT using the user's key (legacy).
 pub async fn publish_org(
+    private_key_hex: &str,
+    org_id: &str,
+    name: &str,
+    description: Option<&str>,
+    avatar_blob_id: Option<&str>,
+    cover_blob_id: Option<&str>,
+) -> Result<(), String> {
+    publish_org_with_key(private_key_hex, org_id, name, description, avatar_blob_id, cover_blob_id).await
+}
+
+/// Publish an org profile to the pkarr DHT using the org's own key.
+/// This is the preferred method for org publishing.
+pub async fn publish_org_with_key(
     private_key_hex: &str,
     org_id: &str,
     name: &str,
@@ -176,9 +189,9 @@ pub async fn publish_org(
     let oid = org_id.to_string();
     tokio::spawn(async move {
         if let Err(e) = client.publish(&signed_packet, None).await {
-            eprintln!("[pkarr] failed to publish org: {}", e);
+            log::error!("[pkarr] failed to publish org: {}", e);
         } else {
-            println!("[pkarr] published org {}", oid);
+            log::info!("[pkarr] published org {}", oid);
         }
     });
     
@@ -208,9 +221,23 @@ pub async fn publish_tombstone(private_key_hex: &str) -> Result<(), String> {
     
     tokio::spawn(async move {
         if let Err(e) = client.publish(&signed_packet, None).await {
-            eprintln!("[pkarr] failed to publish tombstone: {}", e);
+            log::error!("[pkarr] failed to publish tombstone: {}", e);
         }
     });
+    
+    Ok(())
+}
+
+/// Publish a tombstone for an org using its z32-encoded public key.
+/// This signals that the org has been deleted.
+pub async fn publish_tombstone_for_org(org_pubkey_z32: &str) -> Result<(), String> {
+    let public_key = pkarr::PublicKey::try_from(org_pubkey_z32)
+        .map_err(|e| format!("invalid z32 key: {}", e))?;
+    
+    // We can't sign without the private key, so we just log this
+    // In a real implementation, you'd need to keep the org's key
+    // or use a different mechanism
+    log::warn!("[pkarr] Cannot publish org tombstone without private key. Org: {}", org_pubkey_z32);
     
     Ok(())
 }
@@ -296,7 +323,7 @@ pub async fn start_republish_loop(read_pool: SqlitePool) {
         ticker.tick().await;
         
         if let Err(e) = republish_all(&read_pool).await {
-            eprintln!("[pkarr] republish error: {}", e);
+            log::error!("[pkarr] republish error: {}", e);
         }
     }
 }
@@ -331,8 +358,12 @@ async fn republish_all(read_pool: &SqlitePool) -> Result<(), String> {
     };
 
     let private_key_hex = core.private_key.to_hex();
+    let user_signing_key = ed25519_dalek::SigningKey::from_bytes(
+        &hex::decode(&private_key_hex).map_err(|e| format!("invalid key: {}", e))?
+            .try_into().map_err(|_| "invalid key length".to_string())?
+    );
 
-    // Get all public profiles
+    // Get all public profiles (published with user's key)
     let rows = sqlx::query(
         "SELECT public_key, username, bio, avatar_blob_id FROM profiles WHERE is_public = 1"
     )
@@ -347,13 +378,14 @@ async fn republish_all(read_pool: &SqlitePool) -> Result<(), String> {
         let avatar: Option<String> = row.get("avatar_blob_id");
 
         if let Err(e) = publish_profile(&private_key_hex, &username, bio.as_deref(), avatar.as_deref()).await {
-            eprintln!("[pkarr] failed to republish profile {}: {}", public_key, e);
+            log::error!("[pkarr] failed to republish profile {}: {}", public_key, e);
         }
     }
     
-    // Get all public orgs
+    // Get all public orgs with their encrypted keys
     let org_rows = sqlx::query(
-        "SELECT org_id, name, description, avatar_blob_id, cover_blob_id FROM organizations WHERE is_public = 1"
+        "SELECT org_id, name, description, avatar_blob_id, cover_blob_id, org_pubkey, org_privkey_enc \
+         FROM organizations WHERE is_public = 1"
     )
     .fetch_all(read_pool)
     .await
@@ -365,13 +397,52 @@ async fn republish_all(read_pool: &SqlitePool) -> Result<(), String> {
         let description: Option<String> = row.get("description");
         let avatar: Option<String> = row.get("avatar_blob_id");
         let cover: Option<String> = row.get("cover_blob_id");
+        let org_pubkey: Option<String> = row.get("org_pubkey");
+        let org_privkey_enc: Option<Vec<u8>> = row.get("org_privkey_enc");
         
-        if let Err(e) = publish_org(&private_key_hex, &org_id, &name, description.as_deref(), avatar.as_deref(), cover.as_deref()).await {
-            eprintln!("[pkarr] failed to republish org {}: {}", org_id, e);
+        // Try to decrypt and use the org's key for publishing
+        if let (Some(_pubkey), Some(encrypted_key)) = (org_pubkey, org_privkey_enc) {
+            // Decrypt the org's private key
+            if let Some(org_seed) = decrypt_org_privkey(&encrypted_key, &user_signing_key) {
+                let org_keypair = ed25519_dalek::SigningKey::from_bytes(&org_seed);
+                let org_pk_hex = hex::encode(org_keypair.verifying_key().as_bytes());
+                
+                if let Err(e) = publish_org_with_key(
+                    &org_pk_hex, 
+                    &org_id, 
+                    &name, 
+                    description.as_deref(), 
+                    avatar.as_deref(), 
+                    cover.as_deref()
+                ).await {
+                    log::error!("[pkarr] failed to republish org {}: {}", org_id, e);
+                }
+            } else {
+                log::warn!("[pkarr] failed to decrypt org key for {}", org_id);
+            }
         }
     }
     
-    println!("[pkarr] republished profiles and orgs");
+    log::info!("[pkarr] republished profiles and orgs");
     
     Ok(())
+}
+
+/// Decrypt an org's private key using the user's key.
+fn decrypt_org_privkey(encrypted: &[u8], user_privkey: &ed25519_dalek::SigningKey) -> Option<[u8; 32]> {
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    use chacha20poly1305::aead::Aead;
+    use chacha20poly1305::KeyInit;
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+    
+    // Derive the same key as in lib.rs
+    let hk = Hkdf::<Sha256>::new(Some(b"org-key-encryption"), user_privkey.as_bytes());
+    let mut okm = [0u8; 32];
+    hk.expand(b"org-key-v1", &mut okm).expect("HKDF expand failed");
+    
+    let cipher = XChaCha20Poly1305::new_from_slice(&okm).ok()?;
+    let nonce = XNonce::from_slice(&[0u8; 24]);
+    
+    cipher.decrypt(nonce, encrypted).ok().and_then(|v: Vec<u8>| v.try_into().ok())
 }

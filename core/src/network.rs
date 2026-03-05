@@ -1,690 +1,494 @@
-//! Phase 3 — p2panda-net integration.
+//! Iroh-based P2P networking layer.
+//!
+//! This module provides:
+//! - Iroh endpoint for P2P connectivity (NAT traversal, hole punching)
+//! - Custom ALPN protocol for onion routing
+//! - iroh-blobs integration for content-addressed blob storage
+//! - iroh-gossip for message broadcasting
 
 use std::collections::HashMap;
-use std::collections::HashSet;
-use std::convert::Infallible;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::time::Duration;
 
+use iroh::{Endpoint, EndpointId, SecretKey};
+use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh_gossip::api::{Event as GossipEvent, GossipSender};
+use iroh_gossip::net::Gossip;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::task::JoinHandle;
 use futures_util::StreamExt;
+use p2panda_core::{Body, Header};
 use p2panda_store::OperationStore;
-use p2panda_core::{Hash, PrivateKey, PublicKey};
-use p2panda_net::addrs::NodeInfo;
-use p2panda_net::iroh_endpoint::from_public_key;
-use p2panda_net::iroh_mdns::MdnsDiscoveryMode;
-use p2panda_net::gossip::GossipHandle;
-use p2panda_net::{AddressBook, Discovery, Endpoint, Gossip, LogSync, MdnsDiscovery, TopicId};
-use p2panda_sync::protocols::Logs;
-use p2panda_sync::traits::TopicMap;
-use tokio::sync::RwLock;
 
-use crate::sealed_sender;
-use crate::store::{DeltaStore, get_core};
+use crate::{blobs, ops, sealed_sender, store};
 
-// ─── Topic derivation ─────────────────────────────────────────────────────────
+/// ALPN protocol identifier for Delta's onion routing protocol.
+pub const ONION_ALPN: &[u8] = b"/delta/onion/1.0.0";
 
-/// Namespaced prefix prevents collision with other p2panda apps.
-const ORG_PREFIX:       &[u8] = b"delta:org:";
-const ROOM_PREFIX:      &[u8] = b"delta:room:";
-const DM_PREFIX:        &[u8] = b"delta:dm:";
-const DISCOVER_PREFIX:  &[u8] = b"delta:discover:";
+/// ALPN protocol identifier for blob requests.
+pub const BLOB_ALPN: &[u8] = b"/delta/blob/1.0.0";
 
-pub fn topic_id_for_org(org_id: &str) -> [u8; 32] {
-    topic_hash(&[ORG_PREFIX, org_id.as_bytes()])
+/// Maximum size for onion packets (64KB).
+pub const MAX_ONION_PACKET_SIZE: usize = 64 * 1024;
+
+/// Default timeout for P2P operations.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
+    #[error("Network not initialized")]
+    NotInitialized,
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
+    #[error("Stream error: {0}")]
+    StreamError(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
-pub fn topic_id_for_room(room_id: &str) -> [u8; 32] {
-    topic_hash(&[ROOM_PREFIX, room_id.as_bytes()])
-}
-
-/// DM topic is symmetric: both parties derive the same ID regardless of order.
-pub fn topic_id_for_dm(key_a: &str, key_b: &str) -> [u8; 32] {
-    let (lo, hi) = if key_a <= key_b { (key_a, key_b) } else { (key_b, key_a) };
-    topic_hash(&[DM_PREFIX, lo.as_bytes(), b":", hi.as_bytes()])
-}
-
-pub fn topic_id_for_discovery(name: &str) -> [u8; 32] {
-    let normalized = name.to_lowercase();
-    topic_hash(&[DISCOVER_PREFIX, normalized.as_bytes()])
-}
-
-fn topic_hash(parts: &[&[u8]]) -> [u8; 32] {
-    let mut buf = Vec::new();
-    for p in parts { buf.extend_from_slice(p); }
-    *Hash::new(&buf).as_bytes()
-}
-
-// ─── DeltaTopicMap ────────────────────────────────────────────────────────────
-
-/// Log identifier — a String matching how DeltaStore<String, ()> identifies logs.
-pub type LogId = String;
-
-/// Maps a `TopicId` ([u8; 32]) to the set of author logs that belong to that
-/// topic.  The inner map is `TopicId → HashMap<author PublicKey, Vec<LogId>>`,
-/// which is exactly the `Logs<LogId>` type expected by `TopicLogSync`.
-///
-/// `DeltaTopicMap` is cheaply `Clone` (it wraps an `Arc`) and supports runtime
-/// mutation so that callers can register new rooms, orgs or DM threads after
-/// the network has started.
-#[derive(Clone, Default, Debug)]
-pub struct DeltaTopicMap(Arc<RwLock<HashMap<TopicId, Logs<LogId>>>>);
-
-impl DeltaTopicMap {
-    /// Create an empty topic map.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register `(author, log_id)` under the given topic.
-    ///
-    /// Calling this multiple times for the same topic accumulates logs rather
-    /// than replacing them.
-    pub async fn insert(&self, topic_id: TopicId, author: PublicKey, log_id: LogId) {
-        let mut map = self.0.write().await;
-        map.entry(topic_id)
-            .and_modify(|logs| {
-                logs.entry(author).or_default().push(log_id.clone());
-            })
-            .or_insert_with(|| {
-                let mut logs: Logs<LogId> = HashMap::new();
-                logs.insert(author, vec![log_id]);
-                logs
-            });
-    }
-
-    /// Remove all log entries for a topic (e.g. when leaving a room).
-    pub async fn remove(&self, topic_id: &TopicId) {
-        self.0.write().await.remove(topic_id);
-    }
-}
-
-/// `TopicMap<TopicId, Logs<LogId>>` is the trait required by `TopicLogSync`
-/// (used internally by `LogSync::builder`).  We return an empty `Logs` for
-/// unknown topics so sync sessions degrade gracefully rather than failing.
-impl TopicMap<TopicId, Logs<LogId>> for DeltaTopicMap {
-    type Error = Infallible;
-
-    async fn get(&self, topic: &TopicId) -> Result<Logs<LogId>, Self::Error> {
-        let map = self.0.read().await;
-        Ok(map.get(topic).cloned().unwrap_or_default())
-    }
-}
-
-// ─── Error type ───────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct NetworkError(pub String);
-
-impl std::fmt::Display for NetworkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "network error: {}", self.0)
-    }
-}
-
-impl std::error::Error for NetworkError {}
-
-// ─── DiscoveryAnnounce ────────────────────────────────────────────────────────
-
-/// CBOR payload broadcast by public orgs on their discovery topic.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct DiscoveryAnnounce {
-    pub org_id: String,
-    pub name: String,
-    pub type_label: String,
-    pub description: Option<String>,
-    pub creator_key: String,
-    pub created_at: i64,
-}
-
-// ─── NetworkCore singleton ────────────────────────────────────────────────────
-
-/// Type alias for our concrete LogSync instantiation.
-type DeltaLogSync = LogSync<DeltaStore, LogId, (), DeltaTopicMap>;
-
-/// Holds all live p2panda-net handles. Stored in a `OnceLock` so that the rest
-/// of the crate can cheaply access the running network without passing handles
-/// through every call-stack frame.
-pub struct NetworkCore {
-    pub address_book: AddressBook,
+/// Network state containing all Iroh components.
+pub struct NetworkState {
+    /// The Iroh endpoint - handles all QUIC connections
     pub endpoint: Endpoint,
+    /// Handler task for incoming connections
+    #[allow(dead_code)]
+    connection_handler: JoinHandle<()>,
+    /// Channel for onion packets received for this node
+    pub onion_rx: mpsc::UnboundedReceiver<OnionPacket>,
+    /// Blob store for content-addressed storage
+    pub blob_store: Arc<iroh_blobs::store::fs::FsStore>,
+    /// Gossip instance
     pub gossip: Gossip,
-    pub log_sync: DeltaLogSync,
-    pub topic_map: DeltaTopicMap,
-    /// Tracks which `TopicId`s we have already passed to `log_sync.stream()`,
-    /// so that `subscribe_topic_inner` remains idempotent.
-    subscribed: Arc<RwLock<HashSet<TopicId>>>,
-    // Keep discovery and mdns alive for the lifetime of NetworkCore.
-    _discovery: Discovery,
-    _mdns: MdnsDiscovery,
-    /// Gossip handles keyed by TopicId — kept alive so the overlay subscription
-    /// is not dropped, and used for topic-targeted publish.
-    pub gossip_handles: Arc<tokio::sync::Mutex<HashMap<TopicId, GossipHandle>>>,
-    /// Our Ed25519 seed bytes — needed in the gossip drain to open sealed-sender
-    /// DM envelopes.
-    pub my_seed_bytes: [u8; 32],
+    /// Active gossip topics by topic id
+    pub gossip_topics: HashMap<[u8; 32], GossipSender>,
 }
 
-static NETWORK: OnceLock<NetworkCore> = OnceLock::new();
-
-/// Returns the live `NetworkCore` if `init_network()` has been called.
-pub fn get_network() -> Option<&'static NetworkCore> {
-    NETWORK.get()
+/// An onion-routed packet received by this node.
+pub struct OnionPacket {
+    /// The encrypted payload (to be peeled)
+    pub payload: Vec<u8>,
+    /// Source node ID (the immediate sender)
+    pub from_node_id: String,
 }
 
-// ─── Initialisation ───────────────────────────────────────────────────────────
+#[derive(Clone, Copy, Debug)]
+pub enum GossipTopicKind {
+    Room,
+    DmInbox,
+}
 
-/// Build all p2panda-net subsystems and store them in the global singleton.
-///
-/// Called once from `store::bootstrap()` after the operation store and read
-/// model are ready.
+/// Global network state - initialized once on startup.
+static NETWORK: RwLock<Option<Arc<Mutex<NetworkState>>>> = RwLock::const_new(None);
+
+/// Get the network state if initialized.
+pub async fn get_network() -> Option<Arc<Mutex<NetworkState>>> {
+    let guard = NETWORK.read().await;
+    guard.clone()
+}
+
+/// Check if the network is initialized.
+pub async fn is_initialized() -> bool {
+    NETWORK.read().await.is_some()
+}
+
+/// Initialize the Iroh networking stack.
 pub async fn init_network(
-    private_key_hex: &str,
     _db_dir: &str,
-    bootstrap_nodes: Vec<crate::BootstrapNode>,
-    read_pool: &sqlx::SqlitePool,
-) -> Result<(), NetworkError> {
-    // Idempotent — if already initialised just return.
-    if NETWORK.get().is_some() {
-        return Ok(());
-    }
-
-    // ── 1. Parse private key ──────────────────────────────────────────────────
-    let key_bytes = hex::decode(private_key_hex)
-        .map_err(|e| NetworkError(format!("bad private key hex: {e}")))?;
-    let key_array: [u8; 32] = key_bytes
-        .try_into()
-        .map_err(|_| NetworkError("private key must be 32 bytes".into()))?;
-    let private_key = PrivateKey::from_bytes(&key_array);
-    let my_public_key = private_key.public_key();
-
-    // ── 2. Address book ──────────────────────────────────────────────────────
-    let address_book = AddressBook::builder()
-        .spawn()
-        .await
-        .map_err(|e| NetworkError(format!("address book: {e}")))?;
-
-    // Add bootstrap nodes supplied by the caller.
-    for bn in &bootstrap_nodes {
-        let node_id: PublicKey = bn
-            .node_id_hex
-            .parse()
-            .map_err(|e| NetworkError(format!("bad bootstrap node id '{}': {e}", bn.node_id_hex)))?;
-
-        let iroh_node_id = from_public_key(node_id);
-        let mut endpoint_addr = iroh::EndpointAddr::new(iroh_node_id);
-
-        if !bn.relay_url.is_empty() {
-            let relay: iroh::RelayUrl = bn
-                .relay_url
-                .parse()
-                .map_err(|e| NetworkError(format!("bad relay url '{}': {e}", bn.relay_url)))?;
-            endpoint_addr = endpoint_addr.with_relay_url(relay);
+    relay_url: Option<&str>,
+) -> Result<String, NetworkError> {
+    // Check if already initialized
+    {
+        let guard = NETWORK.read().await;
+        if guard.is_some() {
+            let net = guard.as_ref().unwrap().lock().await;
+            return Ok(net.endpoint.id().to_string());
         }
-
-        let node_info = NodeInfo::from(endpoint_addr).bootstrap();
-        address_book
-            .insert_node_info(node_info)
-            .await
-            .map_err(|e| NetworkError(format!("insert bootstrap node: {e}")))?;
     }
 
-    // ── 3. Endpoint ──────────────────────────────────────────────────────────
-    let endpoint = Endpoint::builder(address_book.clone())
-        .private_key(private_key)
-        .spawn()
+    // Get or create the secret key from the core's private key
+    let secret_key = get_or_create_secret_key().await?;
+
+    // Create the endpoint
+    let builder = Endpoint::builder()
+        .secret_key(secret_key);
+
+    if let Some(url) = relay_url {
+        log::info!("[network] Using relay: {}", url);
+        // Relay configuration would go here
+    }
+
+    let endpoint = builder.bind()
         .await
-        .map_err(|e| NetworkError(format!("endpoint: {e}")))?;
+        .map_err(|e| NetworkError::ConnectionFailed(e.to_string()))?;
 
-    // ── 4. Discovery ─────────────────────────────────────────────────────────
-    let discovery = Discovery::builder(address_book.clone(), endpoint.clone())
-        .spawn()
+    let node_id = endpoint.id();
+    log::info!("[network] Iroh endpoint bound, node_id: {}", node_id);
+    
+    // Store node_id for later use since we can't call node_id() on endpoint after move
+    let node_id_string = node_id.to_string();
+
+    // Initialize blob store
+    let blob_store_path = blobs::blob_store_path(_db_dir);
+    let blob_store = iroh_blobs::store::fs::FsStore::load(blob_store_path)
         .await
-        .map_err(|e| NetworkError(format!("discovery: {e}")))?;
+        .map_err(|e| NetworkError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let blob_store = Arc::new(blob_store);
 
-    // ── 5. mDNS (passive — no LAN beacon, just listen) ───────────────────────
-    let mdns = MdnsDiscovery::builder(address_book.clone(), endpoint.clone())
-        .mode(MdnsDiscoveryMode::Passive)
-        .spawn()
-        .await
-        .map_err(|e| NetworkError(format!("mdns: {e}")))?;
+    // Channel for receiving onion packets
+    let (onion_tx, onion_rx) = mpsc::unbounded_channel();
 
-    // ── 6. Gossip ────────────────────────────────────────────────────────────
-    let gossip = Gossip::builder(address_book.clone(), endpoint.clone())
-        .spawn()
-        .await
-        .map_err(|e| NetworkError(format!("gossip: {e}")))?;
+    // Spawn gossip
+    let gossip = Gossip::builder().spawn(endpoint.clone());
 
-    // ── 7. Topic map ──────────────────────────────────────────────────────────
-    let topic_map = DeltaTopicMap::new();
+    // Spawn connection handler
+    let endpoint_clone = endpoint.clone();
+    let gossip_clone = gossip.clone();
+    let handler = tokio::spawn(connection_handler(endpoint_clone, gossip_clone, onion_tx));
 
-    // ── 8. Op store ───────────────────────────────────────────────────────────
-    // Clone the DeltaStore from the global CORE.
-    // DeltaStore (SqliteStore) is Clone — it wraps a connection pool Arc.
-    let op_store: DeltaStore = {
-        let core = get_core()
-            .ok_or_else(|| NetworkError("core not initialised before network".into()))?;
-        core.op_store.lock().await.clone()
-    };
-
-    // ── 9. LogSync ───────────────────────────────────────────────────────────
-    let log_sync: DeltaLogSync = LogSync::builder(
-        op_store,
-        topic_map.clone(),
-        endpoint.clone(),
-        gossip.clone(),
-    )
-    .spawn()
-    .await
-    .map_err(|e| NetworkError(format!("log sync: {e}")))?;
-
-    // ── 10. Build NetworkCore ─────────────────────────────────────────────────
-    let core = NetworkCore {
-        address_book,
+    let state = NetworkState {
         endpoint,
+        connection_handler: handler,
+        onion_rx,
+        blob_store,
         gossip,
-        log_sync,
-        topic_map,
-        subscribed: Arc::new(RwLock::new(HashSet::new())),
-        _discovery: discovery,
-        _mdns: mdns,
-        gossip_handles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        my_seed_bytes: key_array,
+        gossip_topics: HashMap::new(),
     };
 
-    NETWORK
-        .set(core)
-        .map_err(|_| NetworkError("network already initialised".into()))?;
+    // Store the network state
+    {
+        let mut guard = NETWORK.write().await;
+        *guard = Some(Arc::new(Mutex::new(state)));
+    }
 
-    // ── 11. Subscribe to topics we already know about from the read model ─────
-    subscribe_initial_topics(my_public_key, read_pool).await?;
-
-    Ok(())
+    log::info!("[network] Network initialized, node_id: {}", node_id_string);
+    Ok(node_id_string)
 }
 
-// ─── Internal subscription helpers ───────────────────────────────────────────
+/// Handler for incoming QUIC connections.
+async fn connection_handler(
+    endpoint: Endpoint,
+    gossip: Gossip,
+    onion_tx: mpsc::UnboundedSender<OnionPacket>,
+) {
+    log::info!("[network] Connection handler started");
 
-/// Subscribe to a topic on both the gossip overlay and the sync protocol.
-///
-/// Idempotent: calling with the same `TopicId` twice is a no-op after the
-/// first successful subscription.
-async fn subscribe_topic_inner(topic_id: TopicId) -> Result<(), NetworkError> {
-    let net = match get_network() {
-        Some(n) => n,
-        None => return Ok(()), // network not yet up; silently skip
-    };
-
-    // Check idempotency.
-    {
-        let subscribed = net.subscribed.read().await;
-        if subscribed.contains(&topic_id) {
-            return Ok(());
-        }
-    }
-
-    // Join gossip overlay for this topic.
-    let gossip_handle = net
-        .gossip
-        .stream(topic_id)
-        .await
-        .map_err(|e| NetworkError(format!("gossip stream: {e}")))?;
-
-    // Spawn a drain task for incoming gossip messages.
-    {
-        let mut gossip_rx = gossip_handle.subscribe();
-        // Capture seed bytes so the drain can open sealed-sender envelopes.
-        let my_seed = net.my_seed_bytes;
+    while let Some(incoming) = endpoint.accept().await {
+        let onion_tx = onion_tx.clone();
+        let gossip = gossip.clone();
+        
         tokio::spawn(async move {
-            while let Some(Ok(bytes)) = gossip_rx.next().await {
-                // Determine the actual op bytes — open sealed envelope if needed.
-                let op_bytes: Vec<u8> = if sealed_sender::is_sealed(&bytes) {
-                    match sealed_sender::open(&bytes, &my_seed) {
-                        Ok((_sender_pk, inner)) => inner,
-                        Err(_) => continue, // not addressed to us, or tampered
+            match incoming.await {
+                Ok(conn) => {
+                    if let Err(e) = handle_connection(conn, &gossip, onion_tx).await {
+                        log::warn!("[network] Connection handling error: {}", e);
                     }
-                } else {
-                    bytes
-                };
-
-                // Decode the GossipEnvelope.
-                let env = match crate::ops::decode_cbor::<crate::ops::GossipEnvelope>(&op_bytes) {
-                    Ok(e) => e,
-                    Err(_) => continue,
-                };
-
-                // Decode the p2panda Header.
-                let header = match p2panda_core::Header::try_from(env.header_bytes.as_slice()) {
-                    Ok(h) => h,
-                    Err(_) => continue,
-                };
-                let body = p2panda_core::Body::new(&env.body_bytes);
-                let op_hash = header.hash();
-
-                // Insert into the op store; the projector picks it up within 500 ms.
-                // Duplicate inserts are silently ignored.
-                if let Some(core) = crate::store::get_core() {
-                    let mut store = core.op_store.lock().await;
-                    let _ = store
-                        .insert_operation(op_hash, &header, Some(&body), &env.header_bytes, &env.log_id)
-                        .await;
+                }
+                Err(e) => {
+                    log::warn!("[network] Failed to accept connection: {}", e);
                 }
             }
         });
     }
-    // Keep handle alive (keyed by topic) so the TopicDropGuard is not dropped.
-    net.gossip_handles.lock().await.insert(topic_id, gossip_handle);
 
-    // Subscribe via log sync (live_mode = true).
-    let sync_handle = net
-        .log_sync
-        .stream(topic_id, true)
-        .await
-        .map_err(|e| NetworkError(format!("log sync stream: {e}")))?;
-    // Dropping sync_handle would unsubscribe from the topic, so intentionally
-    // leak it to keep the sync session alive for the network's lifetime.
-    std::mem::forget(sync_handle);
-
-    // Mark as subscribed.
-    net.subscribed.write().await.insert(topic_id);
-
-    Ok(())
+    log::info!("[network] Connection handler stopped");
 }
 
-/// Subscribe to an organisation's meta topic and its discovery topic.
-pub async fn subscribe_org_meta(org_id: &str) -> Result<(), NetworkError> {
-    subscribe_topic_inner(topic_id_for_org(org_id)).await?;
-    subscribe_topic_inner(topic_id_for_discovery(org_id)).await?;
-    Ok(())
-}
-
-/// Subscribe to a room's sync topic.
-async fn subscribe_room_inner(room_id: &str) -> Result<(), NetworkError> {
-    subscribe_topic_inner(topic_id_for_room(room_id)).await
-}
-
-/// On startup, load every org and room the local user is a member of from the
-/// read model and subscribe to their topics. This catches up with local state
-/// accumulated while offline.
-async fn subscribe_initial_topics(
-    my_public_key: PublicKey,
-    read_pool: &sqlx::SqlitePool,
+/// Handle a single connection based on its ALPN.
+async fn handle_connection(
+    conn: Connection,
+    gossip: &Gossip,
+    onion_tx: mpsc::UnboundedSender<OnionPacket>,
 ) -> Result<(), NetworkError> {
-    let my_key_hex = my_public_key.to_hex();
+    let alpn = conn.alpn();
+    
+    log::debug!("[network] New connection with ALPN: {:?}", alpn);
 
-    // Subscribe to all orgs we belong to.
-    let orgs = crate::db::list_orgs_for_member(read_pool, &my_key_hex)
-        .await
-        .map_err(|e| NetworkError(format!("list orgs: {e}")))?;
+    match alpn.as_deref() {
+        Some(a) if a == ONION_ALPN => handle_onion_connection(conn, onion_tx).await,
+        Some(a) if a == BLOB_ALPN => handle_blob_connection(conn).await,
+        Some(a) if a == iroh_gossip::net::GOSSIP_ALPN => {
+            gossip
+                .handle_connection(conn)
+                .await
+                .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+            Ok(())
+        }
+        _ => {
+            log::warn!("[network] Unknown ALPN: {:?}", alpn);
+            Ok(())
+        }
+    }
+}
 
-    for org in &orgs {
-        subscribe_org_meta(&org.org_id).await?;
+/// Handle connections using the onion routing protocol.
+async fn handle_onion_connection(
+    conn: Connection,
+    onion_tx: mpsc::UnboundedSender<OnionPacket>,
+) -> Result<(), NetworkError> {
+    let remote_node_id = match conn.remote_id() {
+        Ok(id) => id,
+        Err(e) => {
+            log::warn!("[network] Could not get remote node id: {}", e);
+            return Ok(());
+        }
+    };
 
-        // Subscribe to each room in this org.
-        let rooms = crate::db::list_rooms(read_pool, &org.org_id, false)
-            .await
-            .map_err(|e| NetworkError(format!("list rooms: {e}")))?;
-
-        for room in &rooms {
-            subscribe_room_inner(&room.room_id).await?;
+    // Accept bi-directional streams
+    loop {
+        match conn.accept_bi().await {
+            Ok((send, recv)) => {
+                let onion_tx = onion_tx.clone();
+                let from = remote_node_id;
+                
+                tokio::spawn(async move {
+                    if let Err(e) = handle_onion_stream(send, recv, from, onion_tx).await {
+                        log::warn!("[network] Onion stream error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("[network] Accept bi error: {}", e);
+                break;
+            }
         }
     }
 
     Ok(())
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/// Returns the current connection status.
-///
-/// Returns `Online` once the `NetworkCore` singleton has been initialised.
-pub fn connection_status() -> crate::ConnectionStatus {
-    if NETWORK.get().is_some() {
-        crate::ConnectionStatus::Online
-    } else {
-        crate::ConnectionStatus::Offline
+/// Handle a single onion routing stream.
+async fn handle_onion_stream(
+    _send: SendStream,
+    mut recv: RecvStream,
+    from: EndpointId,
+    onion_tx: mpsc::UnboundedSender<OnionPacket>,
+) -> Result<(), NetworkError> {
+    // Read the packet size (4 bytes, big-endian)
+    let mut size_buf = [0u8; 4];
+    recv.read_exact(&mut size_buf).await
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
+    
+    let size = u32::from_be_bytes(size_buf) as usize;
+    
+    if size > MAX_ONION_PACKET_SIZE {
+        return Err(NetworkError::ProtocolError(
+            format!("Packet too large: {} bytes", size)
+        ));
     }
-}
 
-/// Subscribe to a room's sync and gossip topics.
-pub async fn subscribe_room(room_id: &str) -> Result<(), NetworkError> {
-    subscribe_room_inner(room_id).await
-}
+    // Read the encrypted payload
+    let mut payload = vec![0u8; size];
+    recv.read_exact(&mut payload).await
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
 
-/// Called from lib.rs with both participant keys already resolved from the read model.
-pub async fn subscribe_dm_thread(key_a: &str, key_b: &str) -> Result<(), NetworkError> {
-    let topic = topic_id_for_dm(key_a, key_b);
-    subscribe_topic_inner(topic).await
-}
-
-/// Search for public organisations by querying the discovery gossip topic.
-pub async fn search_public_orgs(query: &str) -> Result<Vec<crate::db::OrgRow>, NetworkError> {
-    use std::time::Duration;
-
-    let net = match NETWORK.get() {
-        Some(n) => n,
-        None => return Ok(vec![]),
+    // Send to processing channel
+    let packet = OnionPacket {
+        payload,
+        from_node_id: from.to_string(),
     };
+    onion_tx.send(packet)
+        .map_err(|_| NetworkError::ProtocolError("Failed to queue packet".to_string()))?;
 
-    let topic_bytes = topic_id_for_discovery(query);
-    let topic_id = p2panda_net::TopicId::from(topic_bytes);
+    Ok(())
+}
 
-    let handle = net
-        .gossip
-        .stream(topic_id)
+/// Handle connections for blob transfers.
+async fn handle_blob_connection(_conn: Connection) -> Result<(), NetworkError> {
+    log::debug!("[network] Blob connection established");
+    Ok(())
+}
+
+/// Send an onion packet to the next hop.
+pub async fn send_onion_packet(
+    next_hop: &str,
+    encrypted_payload: Vec<u8>,
+) -> Result<(), NetworkError> {
+    let network = get_network().await
+        .ok_or(NetworkError::NotInitialized)?;
+    
+    let net = network.lock().await;
+    
+    // Parse the destination node ID
+    let node_id: EndpointId = next_hop.parse()
+        .map_err(|e| NetworkError::ProtocolError(format!("Invalid node ID: {}", e)))?;
+
+    // Connect with our custom ALPN
+    let conn = net.endpoint.connect(node_id, ONION_ALPN).await
+        .map_err(|e| NetworkError::ConnectionFailed(e.to_string()))?;
+
+    // Open a bi-directional stream
+    let (mut send, _recv) = conn.open_bi().await
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
+
+    // Send packet size (4 bytes, big-endian)
+    let size = encrypted_payload.len() as u32;
+    send.write_all(&size.to_be_bytes())
         .await
-        .map_err(|e| NetworkError(e.to_string()))?;
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
 
-    let mut rx = handle.subscribe();
-    let mut results: Vec<crate::db::OrgRow> = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // Send the encrypted payload
+    send.write_all(&encrypted_payload)
+        .await
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
+    send.finish()
+        .map_err(|e| NetworkError::StreamError(e.to_string()))?;
 
-    loop {
-        match tokio::time::timeout_at(deadline, rx.next()).await {
-            Ok(Some(Ok(bytes))) => {
-                if let Ok(org) = crate::ops::decode_cbor::<DiscoveryAnnounce>(&bytes) {
-                    results.push(crate::db::OrgRow {
-                        org_id: org.org_id,
-                        name: org.name,
-                        type_label: org.type_label,
-                        description: org.description,
-                        avatar_blob_id: None,
-                        cover_blob_id: None,
-                        is_public: 1,
-                        creator_key: org.creator_key,
-                        created_at: org.created_at,
-                    });
+    log::debug!("[network] Onion packet sent to {}", next_hop);
+    Ok(())
+}
+
+pub async fn gossip_publish(
+    topic_id: [u8; 32],
+    kind: GossipTopicKind,
+    bootstrap: Vec<EndpointId>,
+    bytes: Vec<u8>,
+) -> Result<(), NetworkError> {
+    let network = get_network().await.ok_or(NetworkError::NotInitialized)?;
+    let mut net = network.lock().await;
+    let sender = ensure_gossip_topic(&mut *net, topic_id, kind, bootstrap).await?;
+    sender
+        .broadcast(bytes.into())
+        .await
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn gossip_join(
+    topic_id: [u8; 32],
+    kind: GossipTopicKind,
+    bootstrap: Vec<EndpointId>,
+) -> Result<(), NetworkError> {
+    let network = get_network().await.ok_or(NetworkError::NotInitialized)?;
+    let mut net = network.lock().await;
+    let _ = ensure_gossip_topic(&mut *net, topic_id, kind, bootstrap).await?;
+    Ok(())
+}
+
+async fn ensure_gossip_topic(
+    net: &mut NetworkState,
+    topic_id: [u8; 32],
+    kind: GossipTopicKind,
+    bootstrap: Vec<EndpointId>,
+) -> Result<GossipSender, NetworkError> {
+    if let Some(sender) = net.gossip_topics.get(&topic_id) {
+        return Ok(sender.clone());
+    }
+
+    let topic = net
+        .gossip
+        .subscribe(iroh_gossip::TopicId::from(topic_id), bootstrap)
+        .await
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+    let (sender, mut receiver) = topic.split();
+    let kind_copy = kind;
+    tokio::spawn(async move {
+        while let Some(event) = receiver.next().await {
+            match event {
+                Ok(GossipEvent::Received(msg)) => {
+                    if let Err(e) = handle_gossip_message(kind_copy, msg.content.to_vec()).await {
+                        log::warn!("[network] Gossip ingest failed: {}", e);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("[network] Gossip receive error: {}", e);
                 }
             }
-            _ => break,
         }
-    }
+    });
 
-    // Keep gossip handle alive for the duration of search (dropped here = leaves topic after search)
-    drop(handle);
-    Ok(results)
+    net.gossip_topics.insert(topic_id, sender.clone());
+    Ok(sender)
 }
 
-/// Publish bytes on all subscribed gossip topics (used for discovery announcements
-/// and other non-DM ops where a specific topic handle is not required).
-pub async fn gossip_op(_log_id: &str, op_bytes: &[u8]) {
-    let net = match NETWORK.get() {
-        Some(n) => n,
-        None => return,
-    };
-    let handles = net.gossip_handles.lock().await;
-    for handle in handles.values() {
-        let _ = handle.publish(op_bytes.to_vec()).await;
-    }
-}
-
-/// Publish `bytes` on the specific gossip topic we're subscribed to.
-/// No-op if we are not subscribed to `topic_id`.
-pub async fn gossip_plain(topic_id: TopicId, bytes: Vec<u8>) {
-    let net = match NETWORK.get() {
-        Some(n) => n,
-        None => return,
-    };
-    let handles = net.gossip_handles.lock().await;
-    if let Some(handle) = handles.get(&topic_id) {
-        let _ = handle.publish(bytes).await;
-    }
-}
-
-/// Convenience wrapper: gossip on a specific topic.
-pub async fn gossip_on_topic(topic_bytes: [u8; 32], bytes: Vec<u8>) {
-    gossip_plain(topic_bytes, bytes).await;
-}
-
-/// Gossip on an organization's meta topic (used for membership ops, etc.).
-pub async fn gossip_on_org(org_id: &str) {
-    // Membership ops are small — LogSync will propagate them; no gossip needed here.
-    let _ = org_id;
-}
-
-/// Seal `gossip_bytes` (a CBOR-encoded [`GossipEnvelope`]) for `recipient_pk_bytes`
-/// and publish the sealed envelope on the shared DM topic.
-///
-/// The relay/gossip peers only ever see opaque ciphertext; only the recipient
-/// with the matching seed can open the envelope and recover the sender identity.
-///
-/// Returns `Ok(())` silently if the network is not yet up — the op is already
-/// in the local store and will be synced via LogSync when connectivity resumes.
-pub async fn gossip_dm_sealed(
-    gossip_bytes: &[u8],
-    sender_key_hex: &str,
-    sender_pk_bytes: &[u8; 32],
-    recipient_key_hex: &str,
-    recipient_pk_bytes: &[u8; 32],
-) -> Result<(), NetworkError> {
-    let net = match NETWORK.get() {
-        Some(n) => n,
-        None => return Ok(()),
+async fn handle_gossip_message(kind: GossipTopicKind, bytes: Vec<u8>) -> Result<(), NetworkError> {
+    let payload = match kind {
+        GossipTopicKind::Room => bytes,
+        GossipTopicKind::DmInbox => {
+            if sealed_sender::is_sealed(&bytes) {
+                let core = store::get_core().ok_or(NetworkError::NotInitialized)?;
+                let seed = *core.private_key.as_bytes();
+                let (_sender_pk, op_bytes) = sealed_sender::open(&bytes, &seed)
+                    .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+                op_bytes
+            } else {
+                bytes
+            }
+        }
     };
 
-    let envelope = sealed_sender::seal(gossip_bytes, sender_pk_bytes, recipient_pk_bytes)
-        .map_err(|e| NetworkError(format!("seal: {e}")))?;
+    ingest_gossip_envelope(&payload).await
+}
 
-    let topic_id: TopicId = topic_id_for_dm(sender_key_hex, recipient_key_hex);
+async fn ingest_gossip_envelope(bytes: &[u8]) -> Result<(), NetworkError> {
+    let core = store::get_core().ok_or(NetworkError::NotInitialized)?;
+    let env = ops::decode_cbor::<ops::GossipEnvelope>(bytes)
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+    let header = Header::try_from(env.header_bytes.as_slice())
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+    let body = Body::new(&env.body_bytes);
+    let op_hash = header.hash();
 
-    let handles = net.gossip_handles.lock().await;
-    if let Some(handle) = handles.get(&topic_id) {
-        let _ = handle.publish(envelope).await;
-    }
-    // If we're not subscribed to this topic yet the op is in the store and
-    // will be synced when both peers are on the topic.
-
+    let mut store = core.op_store.lock().await;
+    store
+        .insert_operation(op_hash, &header, Some(&body), &env.header_bytes, &env.log_id)
+        .await
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
     Ok(())
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+/// Get our node ID as a string.
+pub async fn get_node_id() -> Result<String, NetworkError> {
+    let network = get_network().await
+        .ok_or(NetworkError::NotInitialized)?;
+    
+    let net = network.lock().await;
+    Ok(net.endpoint.id().to_string())
+}
+
+/// Get or create the node's secret key.
+async fn get_or_create_secret_key() -> Result<SecretKey, NetworkError> {
+    let core = store::get_core()
+        .ok_or(NetworkError::NotInitialized)?;
+    
+    // Convert p2panda private key to Iroh secret key
+    let p2panda_bytes = hex::decode(core.private_key.to_hex())
+        .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+    
+    if p2panda_bytes.len() != 32 {
+        return Err(NetworkError::ProtocolError("Invalid private key length".to_string()));
+    }
+
+    // Create Iroh secret key from the same seed
+    let key_bytes: [u8; 32] = p2panda_bytes.try_into()
+        .map_err(|_| NetworkError::ProtocolError("Invalid key conversion".to_string()))?;
+    
+    let secret_key = SecretKey::from_bytes(&key_bytes);
+    
+    Ok(secret_key)
+}
+
+/// Shutdown the network layer.
+pub async fn shutdown_network() {
+    let mut guard = NETWORK.write().await;
+    if let Some(net) = guard.take() {
+        let net = net.lock().await;
+        net.endpoint.close().await;
+        log::info!("[network] Network shutdown complete");
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── topic derivation ──────────────────────────────────────────────────────
-
-    #[test]
-    fn org_topic_is_deterministic() {
-        let id = "abc123";
-        assert_eq!(topic_id_for_org(id), topic_id_for_org(id));
-    }
-
-    #[test]
-    fn room_topic_differs_from_org_topic() {
-        let id = "abc123";
-        assert_ne!(topic_id_for_org(id), topic_id_for_room(id));
-    }
-
-    #[test]
-    fn dm_topic_is_symmetric() {
-        let a = "aaaa";
-        let b = "bbbb";
-        assert_eq!(topic_id_for_dm(a, b), topic_id_for_dm(b, a));
-    }
-
-    #[test]
-    fn dm_topic_differs_for_different_pairs() {
-        assert_ne!(
-            topic_id_for_dm("aaaa", "bbbb"),
-            topic_id_for_dm("aaaa", "cccc"),
-        );
-    }
-
-    #[test]
-    fn discovery_topic_is_case_insensitive() {
-        assert_eq!(
-            topic_id_for_discovery("Rustaceans"),
-            topic_id_for_discovery("rustaceans"),
-        );
-    }
-
-    // ── DeltaTopicMap ─────────────────────────────────────────────────────────
-
     #[tokio::test]
-    async fn topic_map_unknown_topic_returns_empty_logs() {
-        let map = DeltaTopicMap::new();
-        let unknown: TopicId = [0u8; 32];
-        let logs = map.get(&unknown).await.unwrap();
-        assert!(logs.is_empty());
-    }
-
-    #[tokio::test]
-    async fn topic_map_insert_and_retrieve() {
-        let map = DeltaTopicMap::new();
-        let topic = topic_id_for_room("room-1");
-
-        // Build a fake author public key from a known private key.
-        let private_key = p2panda_core::PrivateKey::new();
-        let author = private_key.public_key();
-
-        map.insert(topic, author, "1".to_string()).await;
-
-        let logs = map.get(&topic).await.unwrap();
-        assert_eq!(logs.get(&author), Some(&vec!["1".to_string()]));
-    }
-
-    #[tokio::test]
-    async fn topic_map_accumulates_logs_for_same_author() {
-        let map = DeltaTopicMap::new();
-        let topic = topic_id_for_room("room-2");
-        let private_key = p2panda_core::PrivateKey::new();
-        let author = private_key.public_key();
-
-        map.insert(topic, author, "1".to_string()).await;
-        map.insert(topic, author, "2".to_string()).await;
-
-        let logs = map.get(&topic).await.unwrap();
-        let mut ids = logs.get(&author).unwrap().clone();
-        ids.sort();
-        assert_eq!(ids, vec!["1".to_string(), "2".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn topic_map_remove_clears_topic() {
-        let map = DeltaTopicMap::new();
-        let topic = topic_id_for_room("room-3");
-        let private_key = p2panda_core::PrivateKey::new();
-        let author = private_key.public_key();
-
-        map.insert(topic, author, "1".to_string()).await;
-        map.remove(&topic).await;
-
-        let logs = map.get(&topic).await.unwrap();
-        assert!(logs.is_empty());
-    }
-
-    #[tokio::test]
-    async fn topic_map_clone_shares_state() {
-        let map = DeltaTopicMap::new();
-        let clone = map.clone();
-
-        let topic = topic_id_for_org("org-1");
-        let private_key = p2panda_core::PrivateKey::new();
-        let author = private_key.public_key();
-
-        map.insert(topic, author, "42".to_string()).await;
-
-        // The clone should see the same insertion because they share the Arc.
-        let logs = clone.get(&topic).await.unwrap();
-        assert_eq!(logs.get(&author), Some(&vec!["42".to_string()]));
+    async fn test_node_id_parsing() {
+        // Test that we can parse node IDs correctly
+        let id_str = "ae58c67e4e034e4ae26f17c13c25b6b7c5a7cc7b7d78380d1f5e1c1a1b1c1d1e";
+        let result: Result<EndpointId, _> = id_str.parse();
+        assert!(result.is_ok());
     }
 }

@@ -15,6 +15,7 @@ import {
   ScrollView,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { Menu, Search } from 'lucide-react-native';
 import { useOrgsStore } from '../stores/useOrgsStore';
 import { useMessagesStore } from '../stores/useMessagesStore';
@@ -23,54 +24,28 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { ChannelMessage } from '../components/ChannelMessage';
 import { MessageComposer } from '../components/MessageComposer';
 import { OrgSearchPanel } from '../components/OrgSearchPanel';
+import { DebugConnectionPanel } from '../components/DebugConnectionPanel';
 import { listOrgMembers } from '../ffi/deltaCore';
 import { BlobImage } from '../components/BlobImage';
+import { DefaultCoverShader } from '../components/DefaultCoverShader';
 
 const DRAWER_WIDTH = 280;
 const EDGE_HIT_WIDTH = 20;
 const SNAP_THRESHOLD = DRAWER_WIDTH * 0.3;
 const VEL_THRESHOLD = 0.5;
 
-// ─── Banner gradient ──────────────────────────────────────────────────────────
+// ─── Banner component ─────────────────────────────────────────────────────────
 
-const GRADIENT_PAIRS: [string, string][] = [
-  ['#1a1a2e', '#16213e'],
-  ['#0f3460', '#533483'],
-  ['#1b1b2f', '#2c2c54'],
-  ['#162447', '#1f4068'],
-  ['#1a0533', '#3b0a45'],
-  ['#0d1b2a', '#1b4332'],
-  ['#2d1b33', '#1a1a2e'],
-];
-
-function orgGradient(seed: string): [string, string] {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return GRADIENT_PAIRS[Math.abs(hash) % GRADIENT_PAIRS.length];
-}
-
-function OrgBanner({ orgId, orgName, coverBlobId }: { orgId: string; orgName: string; coverBlobId?: string | null }) {
-  const [bg1, bg2] = orgGradient(orgId);
+function OrgBanner({ orgName, coverBlobId }: { orgName: string; coverBlobId?: string | null }) {
   const initials = orgName.slice(0, 2).toUpperCase();
 
-  if (coverBlobId) {
-    return (
-      <View style={bannerStyles.root}>
-        <BlobImage blobHash={coverBlobId} style={bannerStyles.coverImage} />
-        <View style={bannerStyles.content}>
-          <View style={[bannerStyles.avatar, { borderColor: '#111' }]}>
-            <Text style={bannerStyles.avatarText}>{initials}</Text>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
   return (
-    <View style={[bannerStyles.root, { backgroundColor: bg1 }]}>
-      <View style={[bannerStyles.overlay, { backgroundColor: bg2 }]} />
+    <View style={bannerStyles.root}>
+      {coverBlobId ? (
+        <BlobImage blobHash={coverBlobId} style={bannerStyles.coverImage} />
+      ) : (
+        <DefaultCoverShader width={DRAWER_WIDTH} height={120} />
+      )}
       <View style={bannerStyles.content}>
         <View style={[bannerStyles.avatar, { borderColor: '#111' }]}>
           <Text style={bannerStyles.avatarText}>{initials}</Text>
@@ -82,7 +57,6 @@ function OrgBanner({ orgId, orgName, coverBlobId }: { orgId: string; orgName: st
 
 const bannerStyles = StyleSheet.create({
   root: { height: 120, overflow: 'hidden' },
-  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.45 },
   coverImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   content: { flex: 1, justifyContent: 'flex-end', padding: 14 },
   avatar: {
@@ -103,7 +77,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
 
   const { rooms, fetchRooms, createRoom, orgs } = useOrgsStore();
   const org = orgs.find(o => o.orgId === orgId);
-  const { messages, fetchMessages, sendMessage } = useMessagesStore();
+  const { messages, fetchMessages, sendMessage, deleteMessage } = useMessagesStore();
   const { myProfile, profileCache, fetchProfile } = useProfileStore();
 
   const [activeRoomId, setActiveRoomId]     = useState<string | null>(null);
@@ -119,7 +93,8 @@ export function OrgChatScreen({ route, navigation }: Props) {
   const [newRoomName, setNewRoomName]       = useState('');
   const [roomBusy, setRoomBusy]             = useState(false);
 
-  const flatListRef   = useRef<FlatList>(null);
+  const flatListRef    = useRef<FlatList>(null);
+  const activeRoomRef  = useRef<string | null>(null);
   const drawerX       = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const drawerIsOpen  = useRef(false); // ref for PanResponder closures
   const isNearBottom  = useRef(true);
@@ -201,9 +176,12 @@ export function OrgChatScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       ),
       headerRight: () => (
-        <TouchableOpacity style={s.headerBtn} onPress={() => setIsSearchOpen(true)}>
-          <Search size={18} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={[s.headerBtn, { marginRight: 8 }]} onPress={() => setIsSearchOpen(true)}>
+            <Search size={18} color="#fff" />
+          </TouchableOpacity>
+          <DebugConnectionPanel />
+        </View>
       ),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,8 +191,18 @@ export function OrgChatScreen({ route, navigation }: Props) {
 
   useEffect(() => {
     loadInitial();
+    return () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (activeRoomId) {
+        fetchMessages(activeRoomId, null).catch(() => {});
+      }
+      return () => {};
+    }, [activeRoomId]),
+  );
 
   // Fetch profiles for any authors not yet in cache
   useEffect(() => {
@@ -259,6 +247,10 @@ export function OrgChatScreen({ route, navigation }: Props) {
   // ── Channel switch ──────────────────────────────────────────────────────────
 
   async function switchRoom(roomId: string, roomName: string) {
+    // Unsubscribe previous room, subscribe new one
+    // No sync subscriptions; fetch on demand
+    activeRoomRef.current = roomId;
+
     setActiveRoomId(roomId);
     setActiveRoomName(roomName);
     closeDrawer();
@@ -381,6 +373,8 @@ export function OrgChatScreen({ route, navigation }: Props) {
               const profile = profileCache[item.authorKey];
               const authorUsername = profile?.username ?? item.authorKey.slice(0, 8);
               const authorAvatarBlobId = profile?.avatarBlobId ?? null;
+              const canDelete = item.authorKey === myProfile?.publicKey || isAdmin;
+
               return (
                 <ChannelMessage
                   message={item}
@@ -389,12 +383,41 @@ export function OrgChatScreen({ route, navigation }: Props) {
                   authorUsername={authorUsername}
                   authorAvatarBlobId={authorAvatarBlobId}
                   onReply={() => setReplyingTo(item.messageId)}
-                  onLongPress={() =>
-                    Alert.alert('Message Actions', 'Choose an action', [
+                  onLongPress={() => {
+                    const actions: Array<{ text: string; onPress?: () => void; style?: 'cancel' | 'default' | 'destructive' }> = [
                       { text: 'Reply', onPress: () => setReplyingTo(item.messageId) },
-                      { text: 'Cancel', style: 'cancel' },
-                    ])
-                  }
+                    ];
+
+                    if (canDelete && !item.isDeleted) {
+                      actions.push({
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => {
+                          Alert.alert(
+                            'Delete Message',
+                            'Are you sure you want to delete this message?',
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              {
+                                text: 'Delete',
+                                style: 'destructive',
+                                onPress: async () => {
+                                  try {
+                                    await deleteMessage(item.messageId, orgId);
+                                  } catch (err: any) {
+                                    Alert.alert('Error', err.message || 'Failed to delete message');
+                                  }
+                                },
+                              },
+                            ]
+                          );
+                        },
+                      });
+                    }
+
+                    actions.push({ text: 'Cancel', style: 'cancel' });
+                    Alert.alert('Message Actions', 'Choose an action', actions);
+                  }}
                 />
               );
             }}
@@ -452,7 +475,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
           style={[s.drawer, { transform: [{ translateX: drawerX }] }]}
           {...drawerPan.panHandlers}
         >
-          <OrgBanner orgId={orgId} orgName={orgName} coverBlobId={org?.coverBlobId} />
+          <OrgBanner orgName={orgName} coverBlobId={org?.coverBlobId} />
 
           <View style={s.orgInfo}>
             <View style={s.orgInfoRow}>

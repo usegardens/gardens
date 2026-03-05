@@ -13,17 +13,18 @@ interface Props {
   blobHash: string;
   style?: StyleProp<ImageStyle>;
   mimeType?: string; // defaults to 'image/jpeg'
+  roomId?: string | null;
 }
 
 type State = { status: 'loading' } | { status: 'ready'; uri: string } | { status: 'error' };
 
-export function BlobImage({ blobHash, style, mimeType = 'image/jpeg' }: Props) {
+export function BlobImage({ blobHash, style, mimeType = 'image/jpeg', roomId = null }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
 
-    getBlob(blobHash)
+    getBlob(blobHash, roomId)
       .then((bytes) => {
         if (cancelled) return;
         // Convert Uint8Array → base64 string.
@@ -40,7 +41,7 @@ export function BlobImage({ blobHash, style, mimeType = 'image/jpeg' }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [blobHash, mimeType]);
+  }, [blobHash, mimeType, roomId]);
 
   if (state.status === 'loading') {
     return (

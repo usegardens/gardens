@@ -1,5 +1,6 @@
 /**
  * HTML template rendering for profile pages.
+ * Matrix-inspired design - clean, centered card layout
  */
 
 import type { ResolvedRecord } from './pkarr';
@@ -11,21 +12,309 @@ interface RenderOptions {
 }
 
 /**
+ * SVG wave background pattern for the light theme
+ */
+const waveBackgroundSvg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 800" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="waveGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e5e7eb;stop-opacity:0.5" />
+      <stop offset="50%" style="stop-color:#d1d5db;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#e5e7eb;stop-opacity:0.5" />
+    </linearGradient>
+    <linearGradient id="waveGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#d1d5db;stop-opacity:0.3" />
+      <stop offset="50%" style="stop-color:#9ca3af;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#d1d5db;stop-opacity:0.3" />
+    </linearGradient>
+  </defs>
+  <path fill="url(#waveGrad1)" d="M0,160 C320,300 420,100 720,160 C1020,220 1120,20 1440,160 L1440,800 L0,800 Z" opacity="0.4"/>
+  <path fill="url(#waveGrad2)" d="M0,200 C360,340 460,140 720,200 C980,260 1080,60 1440,200 L1440,800 L0,800 Z" opacity="0.3"/>
+  <path fill="url(#waveGrad1)" d="M0,240 C400,380 500,180 720,240 C940,300 1040,100 1440,240 L1440,800 L0,800 Z" opacity="0.2"/>
+</svg>
+`;
+
+/**
+ * Delta logo SVG
+ */
+const deltaLogoSvg = `
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="48" height="48" rx="12" fill="url(#deltaGrad)"/>
+  <path d="M14 24C14 18.4772 18.4772 14 24 14V14C29.5228 14 34 18.4772 34 24V28C34 32.4183 30.4183 36 26 36H22C17.5817 36 14 32.4183 14 28V24Z" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="24" cy="24" r="4" fill="white"/>
+  <defs>
+    <linearGradient id="deltaGrad" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+</svg>
+`;
+
+/**
+ * Common CSS styles shared across all page types
+ */
+const commonStyles = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: linear-gradient(180deg, #f3f4f6 0%, #e5e7eb 100%);
+    color: #1f2937;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    position: relative;
+  }
+  .bg-waves {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: url('data:image/svg+xml,${encodeURIComponent(waveBackgroundSvg)}');
+    background-size: cover;
+    background-position: center;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .main-card {
+    background: #ffffff;
+    border-radius: 24px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1), 0 10px 40px -10px rgba(0, 0, 0, 0.1);
+    max-width: 480px;
+    width: 100%;
+    padding: 40px;
+    position: relative;
+    z-index: 1;
+    animation: fadeInUp 0.5s ease-out;
+  }
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 8px;
+    letter-spacing: -0.025em;
+  }
+  .handle {
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 14px;
+    color: #6b7280;
+    word-break: break-all;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    margin-top: 12px;
+    font-weight: 500;
+  }
+  .badge-icon {
+    width: 16px;
+    height: 16px;
+  }
+  .description {
+    text-align: center;
+    color: #4b5563;
+    font-size: 15px;
+    line-height: 1.6;
+    margin: 24px 0;
+  }
+  .app-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 24px;
+    margin-top: 24px;
+  }
+  .app-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .app-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: #111827;
+    margin-bottom: 4px;
+  }
+  .app-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #3B82F6, #8B5CF6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    flex-shrink: 0;
+  }
+  .app-description {
+    font-size: 14px;
+    color: #4b5563;
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+  .learn-more {
+    color: #3B82F6;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .learn-more:hover {
+    text-decoration: underline;
+  }
+  .platforms {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .platform-icon {
+    font-size: 16px;
+  }
+  .instructions {
+    font-size: 14px;
+    color: #374151;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+  .copy-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    font-size: 12px;
+    color: #6b7280;
+    word-break: break-all;
+  }
+  .copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    color: #3B82F6;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .copy-btn:hover {
+    background: #eff6ff;
+  }
+  .copy-btn.copied {
+    color: #10b981;
+  }
+  .btn-primary {
+    display: block;
+    width: 100%;
+    padding: 14px 24px;
+    background: linear-gradient(135deg, #0ea5e9, #0284c7);
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    text-align: center;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 6px -1px rgba(14, 165, 233, 0.2);
+  }
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px -2px rgba(14, 165, 233, 0.3);
+  }
+  .alternative {
+    text-align: center;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #6b7280;
+  }
+  .alternative a {
+    color: #0ea5e9;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .alternative a:hover {
+    text-decoration: underline;
+  }
+  .footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 13px;
+    color: #9ca3af;
+  }
+  .footer a {
+    color: #0ea5e9;
+    text-decoration: none;
+  }
+  .footer a:hover {
+    text-decoration: underline;
+  }
+  .brand-footer {
+    margin-top: 32px;
+    text-align: center;
+    position: relative;
+    z-index: 1;
+  }
+  .brand-logo {
+    font-size: 20px;
+    font-weight: 700;
+    color: #111827;
+    letter-spacing: -0.02em;
+  }
+  @media (max-width: 520px) {
+    .main-card {
+      padding: 28px 20px;
+      border-radius: 20px;
+    }
+    .title {
+      font-size: 24px;
+    }
+  }
+`;
+
+/**
  * Render a profile page HTML for a resolved pkarr record.
  */
 export function renderProfilePage(record: ResolvedRecord, options: RenderOptions): string {
   const { appUrl, appStoreUrl, playStoreUrl } = options;
   
-  const isOrg = record.recordType === 'org';
-  const title = isOrg ? (record.name || 'Organization') : (record.username || 'User');
-  const description = isOrg ? record.description : record.bio;
+  const title = record.username || 'User';
+  const description = record.bio;
+  const displayHandle = `pk:${record.publicKey.slice(0, 16)}...${record.publicKey.slice(-8)}`;
   
   const avatarUrl = record.avatarBlobId 
     ? `https://blobs.deltachat.io/${record.avatarBlobId}` 
-    : null;
-  
-  const coverUrl = record.coverBlobId
-    ? `https://blobs.deltachat.io/${record.coverBlobId}`
     : null;
 
   return `<!DOCTYPE html>
@@ -34,232 +323,106 @@ export function renderProfilePage(record: ResolvedRecord, options: RenderOptions
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="${escapeHtml(title)} on Delta">
-  <meta property="og:description" content="${escapeHtml(description || 'Join me on Delta - secure decentralized messaging')}">
+  <meta property="og:description" content="${escapeHtml(description || 'Connect with me on Delta - secure decentralized messaging')}">
   ${avatarUrl ? `<meta property="og:image" content="${escapeHtml(avatarUrl)}">` : ''}
   <meta name="twitter:card" content="summary">
   <title>${escapeHtml(title)} - Delta</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0a0a;
-      color: #fff;
-      min-height: 100vh;
-    }
-    .cover {
-      width: 100%;
-      height: 200px;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      background-size: cover;
-      background-position: center;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 0 20px 40px;
-    }
-    .avatar-section {
-      display: flex;
-      align-items: flex-end;
-      margin-top: -60px;
-      margin-bottom: 20px;
-    }
-    .avatar {
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      background: #1a1a1a;
-      border: 4px solid #0a0a0a;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 48px;
-    }
-    .avatar img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .info {
-      flex: 1;
-      padding-left: 20px;
-      padding-bottom: 10px;
-    }
-    .name {
-      font-size: 24px;
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .handle {
-      color: #888;
-      font-size: 14px;
-    }
-    .type-badge {
-      display: inline-block;
-      background: #3b82f6;
-      color: #fff;
-      font-size: 12px;
-      padding: 4px 12px;
-      border-radius: 12px;
-      margin-top: 8px;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-    .description {
-      color: #ccc;
-      line-height: 1.6;
-      margin: 20px 0;
-      font-size: 16px;
-    }
-    .key-box {
-      background: #1a1a1a;
-      border-radius: 12px;
-      padding: 16px;
-      margin: 20px 0;
-    }
-    .key-label {
-      font-size: 12px;
-      color: #666;
-      text-transform: uppercase;
-      margin-bottom: 8px;
-    }
-    .key-value {
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 13px;
-      color: #aaa;
-      word-break: break-all;
-    }
-    .actions {
-      display: flex;
-      gap: 12px;
-      margin-top: 24px;
-      flex-wrap: wrap;
-    }
-    .btn {
-      flex: 1;
-      min-width: 140px;
-      padding: 14px 24px;
-      border-radius: 12px;
-      font-size: 16px;
-      font-weight: 600;
-      text-decoration: none;
-      text-align: center;
-      cursor: pointer;
-      border: none;
-      transition: opacity 0.2s;
-    }
-    .btn:hover {
-      opacity: 0.9;
-    }
-    .btn-primary {
-      background: #3b82f6;
-      color: #fff;
-    }
-    .btn-secondary {
-      background: #1a1a1a;
-      color: #fff;
-    }
-    .stores {
-      margin-top: 32px;
-      text-align: center;
-    }
-    .stores-title {
-      color: #666;
-      font-size: 14px;
-      margin-bottom: 16px;
-    }
-    .store-links {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .store-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 20px;
-      background: #1a1a1a;
-      border-radius: 8px;
-      color: #fff;
-      text-decoration: none;
-      font-size: 14px;
-      transition: background 0.2s;
-    }
-    .store-link:hover {
-      background: #2a2a2a;
-    }
-    footer {
-      margin-top: 40px;
-      text-align: center;
-      color: #666;
-      font-size: 14px;
-    }
-    footer a {
-      color: #3b82f6;
-      text-decoration: none;
-    }
-  </style>
+  <style>${commonStyles}</style>
 </head>
 <body>
-  ${coverUrl ? `<div class="cover" style="background-image: url('${escapeHtml(coverUrl)}')"></div>` : '<div class="cover"></div>'}
+  <div class="bg-waves"></div>
   
-  <div class="container">
-    <div class="avatar-section">
-      <div class="avatar">
-        ${avatarUrl ? `<img src="${escapeHtml(avatarUrl)}" alt="">` : (isOrg ? '🏢' : '👤')}
-      </div>
-      <div class="info">
-        <div class="name">${escapeHtml(title)}</div>
-        <div class="handle">pk:${escapeHtml(record.publicKey)}</div>
-        <span class="type-badge">${isOrg ? 'Organization' : 'User'}</span>
-      </div>
+  <div class="main-card">
+    <div class="logo">
+      ${deltaLogoSvg}
+    </div>
+    
+    <div class="header">
+      <h1 class="title">${escapeHtml(title)}</h1>
+      <div class="handle">${escapeHtml(displayHandle)}</div>
+      <span class="badge">
+        <span class="badge-icon">👤</span>
+        Public Profile
+      </span>
     </div>
     
     ${description ? `<p class="description">${escapeHtml(description)}</p>` : ''}
     
-    <div class="key-box">
-      <div class="key-label">Public Key</div>
-      <div class="key-value">${escapeHtml(record.publicKey)}</div>
-    </div>
-    
-    <div class="actions">
-      <a href="${escapeHtml(appUrl)}" class="btn btn-primary">Open in Delta</a>
-      <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${escapeHtml(record.publicKey)}'); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy Key', 2000)">Copy Key</button>
-    </div>
-    
-    <div class="stores">
-      <div class="stores-title">Don't have Delta yet?</div>
-      <div class="store-links">
-        ${appStoreUrl ? `<a href="${escapeHtml(appStoreUrl)}" class="store-link">🍎 App Store</a>` : ''}
-        ${playStoreUrl ? `<a href="${escapeHtml(playStoreUrl)}" class="store-link">🤖 Play Store</a>` : ''}
+    <div class="app-card">
+      <div class="app-header">
+        <div>
+          <div class="app-name">Delta Messenger</div>
+          <div class="app-description">
+            Connect securely on the Delta network.
+            <a href="https://delta.app" class="learn-more" target="_blank">Learn more</a>
+          </div>
+        </div>
+        <div class="app-icon">💬</div>
+      </div>
+      
+      <div class="platforms">
+        <span class="platform-icon">📱</span>
+        <span>Web, iOS & Android</span>
+      </div>
+      
+      <p class="instructions">
+        Open the app on your device, tap "Add Contact" and paste this identifier:
+      </p>
+      
+      <div class="copy-box">
+        <span style="flex: 1;">${escapeHtml(record.publicKey)}</span>
+        <button class="copy-btn" onclick="copyToClipboard(this, '${escapeHtml(record.publicKey)}')" title="Copy">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <a href="${escapeHtml(appUrl)}" class="btn-primary">Open in Delta App</a>
+      
+      <div class="alternative">
+        Don't have Delta? <a href="https://delta.app" target="_blank">Download now</a>
       </div>
     </div>
     
-    <footer>
-      <p>Powered by <a href="https://delta.app">Delta</a> • Decentralized Messaging</p>
-    </footer>
+    <div class="footer">
+      Public key verification powered by <a href="https://pkarr.org" target="_blank">Pkarr</a>
+    </div>
   </div>
+  
+  <div class="brand-footer">
+    <span class="brand-logo">delta</span>
+  </div>
+  
+  <script>
+    function copyToClipboard(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>`;
 }
 
 /**
- * Render an organization page with org-specific styling and features.
+ * Render an organization page with org-specific styling.
  */
 export function renderOrgPage(record: ResolvedRecord, options: RenderOptions): string {
   const { appUrl, appStoreUrl, playStoreUrl } = options;
   
   const orgName = record.name || 'Organization';
   const description = record.description;
+  const displayHandle = `pk:${record.publicKey.slice(0, 16)}...${record.publicKey.slice(-8)}`;
   
   const avatarUrl = record.avatarBlobId 
     ? `https://blobs.deltachat.io/${record.avatarBlobId}` 
-    : null;
-  
-  const coverUrl = record.coverBlobId
-    ? `https://blobs.deltachat.io/${record.coverBlobId}`
     : null;
 
   return `<!DOCTYPE html>
@@ -268,277 +431,90 @@ export function renderOrgPage(record: ResolvedRecord, options: RenderOptions): s
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="${escapeHtml(orgName)} on Delta">
-  <meta property="og:description" content="${escapeHtml(description || 'Join our organization on Delta - secure decentralized messaging')}">
+  <meta property="og:description" content="${escapeHtml(description || 'Join our organization on Delta - secure team messaging')}">
   ${avatarUrl ? `<meta property="og:image" content="${escapeHtml(avatarUrl)}">` : ''}
   <meta name="twitter:card" content="summary">
   <title>${escapeHtml(orgName)} - Delta Organization</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0a0a;
-      color: #fff;
-      min-height: 100vh;
-    }
-    .cover {
-      width: 100%;
-      height: 240px;
-      background: linear-gradient(135deg, #1e3a5f 0%, #0d2137 50%, #1a1a2e 100%);
-      background-size: cover;
-      background-position: center;
-      position: relative;
-    }
-    .cover::after {
-      content: '';
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 100px;
-      background: linear-gradient(transparent, #0a0a0a);
-    }
-    .container {
-      max-width: 680px;
-      margin: 0 auto;
-      padding: 0 20px 40px;
-    }
-    .org-header {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      margin-top: -80px;
-      position: relative;
-      z-index: 1;
-    }
-    .avatar {
-      width: 140px;
-      height: 140px;
-      border-radius: 24px;
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-      border: 6px solid #0a0a0a;
-      overflow: hidden;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 56px;
-      box-shadow: 0 8px 32px rgba(59, 130, 246, 0.3);
-    }
-    .avatar img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .org-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      font-size: 12px;
-      padding: 6px 16px;
-      border-radius: 20px;
-      margin-top: 16px;
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-    }
-    .org-name {
-      font-size: 32px;
-      font-weight: 800;
-      margin-top: 16px;
-      margin-bottom: 8px;
-      background: linear-gradient(135deg, #fff 0%, #94a3b8 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .org-handle {
-      color: #64748b;
-      font-size: 15px;
-      font-family: 'SF Mono', Monaco, monospace;
-    }
-    .description {
-      color: #cbd5e1;
-      line-height: 1.7;
-      margin: 28px 0;
-      font-size: 17px;
-      text-align: center;
-      max-width: 500px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-    .key-box {
-      background: linear-gradient(135deg, #1a1a2e 0%, #0f172a 100%);
-      border: 1px solid #1e293b;
-      border-radius: 16px;
-      padding: 20px;
-      margin: 24px 0;
-    }
-    .key-label {
-      font-size: 11px;
-      color: #64748b;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 10px;
-    }
-    .key-value {
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 13px;
-      color: #94a3b8;
-      word-break: break-all;
-    }
-    .actions {
-      display: flex;
-      gap: 12px;
-      margin-top: 28px;
-      flex-direction: column;
-    }
-    .btn {
-      padding: 16px 28px;
-      border-radius: 14px;
-      font-size: 17px;
-      font-weight: 700;
-      text-decoration: none;
-      text-align: center;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-    }
-    .btn:hover {
-      transform: translateY(-2px);
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #3b82f6, #2563eb);
-      color: #fff;
-      box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
-    }
-    .btn-primary:hover {
-      box-shadow: 0 6px 28px rgba(59, 130, 246, 0.5);
-    }
-    .btn-secondary {
-      background: #1e293b;
-      color: #e2e8f0;
-    }
-    .btn-secondary:hover {
-      background: #334155;
-    }
-    .features {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 16px;
-      margin: 32px 0;
-    }
-    .feature {
-      background: #1a1a1a;
-      border-radius: 12px;
-      padding: 20px;
-      text-align: center;
-    }
-    .feature-icon {
-      font-size: 28px;
-      margin-bottom: 8px;
-    }
-    .feature-text {
-      font-size: 13px;
-      color: #94a3b8;
-    }
-    .stores {
-      margin-top: 40px;
-      text-align: center;
-      padding-top: 32px;
-      border-top: 1px solid #1e293b;
-    }
-    .stores-title {
-      color: #64748b;
-      font-size: 14px;
-      margin-bottom: 16px;
-    }
-    .store-links {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .store-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 20px;
-      background: #1e293b;
-      border-radius: 10px;
-      color: #fff;
-      text-decoration: none;
-      font-size: 14px;
-      transition: all 0.2s;
-    }
-    .store-link:hover {
-      background: #334155;
-    }
-    footer {
-      margin-top: 48px;
-      text-align: center;
-      color: #64748b;
-      font-size: 14px;
-    }
-    footer a {
-      color: #3b82f6;
-      text-decoration: none;
-    }
-  </style>
+  <style>${commonStyles}</style>
 </head>
 <body>
-  ${coverUrl ? `<div class="cover" style="background-image: url('${escapeHtml(coverUrl)}')"></div>` : '<div class="cover"></div>'}
+  <div class="bg-waves"></div>
   
-  <div class="container">
-    <div class="org-header">
-      <div class="avatar">
-        ${avatarUrl ? `<img src="${escapeHtml(avatarUrl)}" alt="">` : '🏢'}
-      </div>
-      <span class="org-badge">🏢 Verified Organization</span>
-      <h1 class="org-name">${escapeHtml(orgName)}</h1>
-      <div class="org-handle">pk:${escapeHtml(record.publicKey)}</div>
+  <div class="main-card">
+    <div class="logo">
+      ${deltaLogoSvg}
+    </div>
+    
+    <div class="header">
+      <h1 class="title">${escapeHtml(orgName)}</h1>
+      <div class="handle">${escapeHtml(displayHandle)}</div>
+      <span class="badge">
+        <span class="badge-icon">🏢</span>
+        Organization
+      </span>
     </div>
     
     ${description ? `<p class="description">${escapeHtml(description)}</p>` : ''}
     
-    <div class="features">
-      <div class="feature">
-        <div class="feature-icon">🔒</div>
-        <div class="feature-text">End-to-End Encrypted</div>
+    <div class="app-card">
+      <div class="app-header">
+        <div>
+          <div class="app-name">Delta for Teams</div>
+          <div class="app-description">
+            Join this organization for secure, end-to-end encrypted team communication.
+            <a href="https://delta.app" class="learn-more" target="_blank">Learn more</a>
+          </div>
+        </div>
+        <div class="app-icon">🏢</div>
       </div>
-      <div class="feature">
-        <div class="feature-icon">🌐</div>
-        <div class="feature-text">Decentralized</div>
+      
+      <div class="platforms">
+        <span class="platform-icon">📱</span>
+        <span>Web, Desktop, iOS & Android</span>
       </div>
-      <div class="feature">
-        <div class="feature-icon">👥</div>
-        <div class="feature-text">Team Channels</div>
+      
+      <p class="instructions">
+        Open the Delta app, tap "Discover Organizations" and paste this identifier:
+      </p>
+      
+      <div class="copy-box">
+        <span style="flex: 1;">${escapeHtml(record.publicKey)}</span>
+        <button class="copy-btn" onclick="copyToClipboard(this, '${escapeHtml(record.publicKey)}')" title="Copy">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <a href="${escapeHtml(appUrl)}" class="btn-primary">Join Organization</a>
+      
+      <div class="alternative">
+        Don't have Delta? <a href="https://delta.app" target="_blank">Download now</a>
       </div>
     </div>
     
-    <div class="key-box">
-      <div class="key-label">Organization Public Key</div>
-      <div class="key-value">${escapeHtml(record.publicKey)}</div>
+    <div class="footer">
+      Organization verified via <a href="https://pkarr.org" target="_blank">Pkarr</a>
     </div>
-    
-    <div class="actions">
-      <a href="${escapeHtml(appUrl)}" class="btn btn-primary">Join Organization in Delta</a>
-      <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${escapeHtml(record.publicKey)}'); this.textContent='✓ Copied!'; setTimeout(() => this.textContent='Copy Organization Key', 2000)">Copy Organization Key</button>
-    </div>
-    
-    <div class="stores">
-      <div class="stores-title">Don't have Delta yet?</div>
-      <div class="store-links">
-        ${appStoreUrl ? `<a href="${escapeHtml(appStoreUrl)}" class="store-link">🍎 App Store</a>` : ''}
-        ${playStoreUrl ? `<a href="${escapeHtml(playStoreUrl)}" class="store-link">🤖 Play Store</a>` : ''}
-      </div>
-    </div>
-    
-    <footer>
-      <p>Powered by <a href="https://delta.app">Delta</a> • Secure Team Communication</p>
-    </footer>
   </div>
+  
+  <div class="brand-footer">
+    <span class="brand-logo">delta</span>
+  </div>
+  
+  <script>
+    function copyToClipboard(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>`;
 }
@@ -551,7 +527,8 @@ export function renderRelayPage(record: ResolvedRecord, options: RenderOptions):
   
   const relayUrl = record.relayUrl || 'Unknown Relay';
   const relayName = record.name || 'Delta Relay';
-  
+  const displayHandle = `pk:${record.publicKey.slice(0, 16)}...${record.publicKey.slice(-8)}`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -561,252 +538,98 @@ export function renderRelayPage(record: ResolvedRecord, options: RenderOptions):
   <meta property="og:description" content="Delta relay server for secure message routing">
   <meta name="twitter:card" content="summary">
   <title>${escapeHtml(relayName)} - Delta Relay</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0a0a;
-      color: #fff;
-      min-height: 100vh;
-    }
-    .hero {
-      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-      padding: 60px 20px;
-      text-align: center;
-      border-bottom: 1px solid #1e293b;
-    }
-    .relay-icon {
-      width: 100px;
-      height: 100px;
-      background: linear-gradient(135deg, #10b981, #059669);
-      border-radius: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 48px;
-      margin: 0 auto 24px;
-      box-shadow: 0 8px 32px rgba(16, 185, 129, 0.3);
-    }
-    .relay-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(16, 185, 129, 0.2);
-      color: #10b981;
-      font-size: 12px;
-      padding: 6px 16px;
-      border-radius: 20px;
-      text-transform: uppercase;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-    .relay-name {
-      font-size: 32px;
-      font-weight: 800;
-      margin-top: 16px;
-      margin-bottom: 8px;
-    }
-    .relay-url {
-      color: #64748b;
-      font-size: 16px;
-      font-family: 'SF Mono', Monaco, monospace;
-    }
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 40px 20px;
-    }
-    .info-card {
-      background: #1a1a1a;
-      border-radius: 16px;
-      padding: 24px;
-      margin-bottom: 20px;
-    }
-    .info-label {
-      font-size: 11px;
-      color: #64748b;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
-    }
-    .info-value {
-      font-family: 'SF Mono', Monaco, monospace;
-      font-size: 14px;
-      color: #e2e8f0;
-      word-break: break-all;
-    }
-    .description {
-      color: #94a3b8;
-      line-height: 1.7;
-      margin: 24px 0;
-      font-size: 16px;
-    }
-    .features {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 16px;
-      margin: 32px 0;
-    }
-    .feature {
-      background: linear-gradient(135deg, #1a1a2e 0%, #0f172a 100%);
-      border: 1px solid #1e293b;
-      border-radius: 12px;
-      padding: 20px;
-      text-align: center;
-    }
-    .feature-icon {
-      font-size: 28px;
-      margin-bottom: 8px;
-    }
-    .feature-text {
-      font-size: 13px;
-      color: #94a3b8;
-    }
-    .actions {
-      display: flex;
-      gap: 12px;
-      margin-top: 32px;
-      flex-direction: column;
-    }
-    .btn {
-      padding: 16px 28px;
-      border-radius: 14px;
-      font-size: 16px;
-      font-weight: 700;
-      text-decoration: none;
-      text-align: center;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-    }
-    .btn:hover {
-      transform: translateY(-2px);
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #10b981, #059669);
-      color: #fff;
-      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
-    }
-    .btn-primary:hover {
-      box-shadow: 0 6px 28px rgba(16, 185, 129, 0.4);
-    }
-    .btn-secondary {
-      background: #1e293b;
-      color: #e2e8f0;
-    }
-    .btn-secondary:hover {
-      background: #334155;
-    }
-    .stores {
-      margin-top: 40px;
-      text-align: center;
-      padding-top: 32px;
-      border-top: 1px solid #1e293b;
-    }
-    .stores-title {
-      color: #64748b;
-      font-size: 14px;
-      margin-bottom: 16px;
-    }
-    .store-links {
-      display: flex;
-      gap: 12px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .store-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 20px;
-      background: #1e293b;
-      border-radius: 10px;
-      color: #fff;
-      text-decoration: none;
-      font-size: 14px;
-      transition: all 0.2s;
-    }
-    .store-link:hover {
-      background: #334155;
-    }
-    footer {
-      margin-top: 48px;
-      text-align: center;
-      color: #64748b;
-      font-size: 14px;
-    }
-    footer a {
-      color: #3b82f6;
-      text-decoration: none;
-    }
-  </style>
+  <style>${commonStyles}</style>
 </head>
 <body>
-  <div class="hero">
-    <div class="relay-icon">📡</div>
-    <span class="relay-badge">🟢 Relay Server</span>
-    <h1 class="relay-name">${escapeHtml(relayName)}</h1>
-    <div class="relay-url">${escapeHtml(relayUrl)}</div>
-  </div>
+  <div class="bg-waves"></div>
   
-  <div class="container">
+  <div class="main-card">
+    <div class="logo">
+      ${deltaLogoSvg}
+    </div>
+    
+    <div class="header">
+      <h1 class="title">${escapeHtml(relayName)}</h1>
+      <div class="handle">${escapeHtml(displayHandle)}</div>
+      <span class="badge" style="background: #dcfce7; color: #166534;">
+        <span class="badge-icon">🟢</span>
+        Relay Server
+      </span>
+    </div>
+    
     <p class="description">
-      This is a Delta relay server that helps route messages securely between users.
-      Relay servers are part of Delta's decentralized network infrastructure.
+      This relay server helps route messages securely through the Delta network.
+      Relays enable offline message delivery and improved connectivity.
     </p>
     
-    <div class="features">
-      <div class="feature">
-        <div class="feature-icon">🔒</div>
-        <div class="feature-text">Encrypted Routing</div>
+    <div class="app-card">
+      <div class="app-header">
+        <div>
+          <div class="app-name">Delta Messenger</div>
+          <div class="app-description">
+            Use this relay for enhanced privacy and reliability.
+            <a href="https://delta.app" class="learn-more" target="_blank">Learn more</a>
+          </div>
+        </div>
+        <div class="app-icon" style="background: linear-gradient(135deg, #10b981, #059669);">📡</div>
       </div>
-      <div class="feature">
-        <div class="feature-icon">⚡</div>
-        <div class="feature-text">Low Latency</div>
+      
+      <div class="platforms">
+        <span class="platform-icon">📱</span>
+        <span>Web, Desktop, iOS & Android</span>
       </div>
-      <div class="feature">
-        <div class="feature-icon">🌐</div>
-        <div class="feature-text">Decentralized</div>
+      
+      <p class="instructions">
+        Open the Delta app, go to Settings → Network → Relays and paste this identifier:
+      </p>
+      
+      <div class="copy-box">
+        <span style="flex: 1;">${escapeHtml(record.publicKey)}</span>
+        <button class="copy-btn" onclick="copyToClipboard(this, '${escapeHtml(record.publicKey)}')" title="Copy">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
       </div>
-    </div>
-    
-    <div class="info-card">
-      <div class="info-label">Relay URL</div>
-      <div class="info-value">${escapeHtml(relayUrl)}</div>
-    </div>
-    
-    <div class="info-card">
-      <div class="info-label">Public Key</div>
-      <div class="info-value">${escapeHtml(record.publicKey)}</div>
-    </div>
-    
-    <div class="actions">
-      <a href="${escapeHtml(appUrl)}" class="btn btn-primary">Use This Relay in Delta</a>
-      <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${escapeHtml(record.publicKey)}'); this.textContent='✓ Copied!'; setTimeout(() => this.textContent='Copy Relay Key', 2000)">Copy Relay Key</button>
-    </div>
-    
-    <div class="stores">
-      <div class="stores-title">Don't have Delta yet?</div>
-      <div class="store-links">
-        ${appStoreUrl ? `<a href="${escapeHtml(appStoreUrl)}" class="store-link">🍎 App Store</a>` : ''}
-        ${playStoreUrl ? `<a href="${escapeHtml(playStoreUrl)}" class="store-link">🤖 Play Store</a>` : ''}
+      
+      <a href="${escapeHtml(appUrl)}" class="btn-primary" style="background: linear-gradient(135deg, #10b981, #059669);">Use This Relay</a>
+      
+      <div class="alternative">
+        Don't have Delta? <a href="https://delta.app" target="_blank">Download now</a>
       </div>
     </div>
     
-    <footer>
-      <p>Powered by <a href="https://delta.app">Delta</a> • Decentralized Messaging</p>
-    </footer>
+    <div class="footer">
+      Relay URL: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 12px;">${escapeHtml(relayUrl)}</code>
+    </div>
   </div>
+  
+  <div class="brand-footer">
+    <span class="brand-logo">delta</span>
+  </div>
+  
+  <script>
+    function copyToClipboard(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }, 2000);
+      });
+    }
+  </script>
 </body>
 </html>`;
 }
 
 function escapeHtml(text: string): string {
   return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/'/g, '&#039;');
 }

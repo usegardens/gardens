@@ -32,7 +32,9 @@ import { OrgChatScreen } from '../screens/OrgChatScreen';
 import { OrgSettingsScreen } from '../screens/OrgSettingsScreen';
 import { UserSettingsScreen } from '../screens/UserSettingsScreen';
 import { DMChatScreen } from '../screens/DMChatScreen';
-import { ConnectionBadge } from '../components/ConnectionBadge';
+import { MemberListScreen } from '../screens/MemberListScreen';
+import { AddMemberScreen } from '../screens/AddMemberScreen';
+import { DebugConnectionPanel } from '../components/DebugConnectionPanel';
 
 // ─── Param lists ──────────────────────────────────────────────────────────────
 
@@ -48,6 +50,8 @@ export type MainStackParamList = {
   Invite: { orgId: string; orgName: string };
   OrgChat: { orgId: string; orgName: string };
   OrgSettings: { orgId: string; orgName: string };
+  MemberList: { orgId: string; orgName: string };
+  AddMember: { orgId: string; orgName: string };
   DMChat: { threadId: string; recipientKey: string };
   Profile: undefined;
   Settings: undefined;
@@ -151,7 +155,7 @@ function MainNavigator() {
                 onPress={() => SheetManager.show('profile-sheet')}
               />
             ),
-            headerRight: () => <ConnectionBadge />,
+            headerRight: () => <DebugConnectionPanel />,
           })}
         />
 
@@ -182,6 +186,16 @@ function MainNavigator() {
           name="OrgSettings"
           component={OrgSettingsScreen}
           options={{ title: 'Server Settings', headerShown: true }}
+        />
+        <MainStack.Screen
+          name="MemberList"
+          component={MemberListScreen}
+          options={{ title: 'Members', headerShown: true }}
+        />
+        <MainStack.Screen
+          name="AddMember"
+          component={AddMemberScreen}
+          options={{ title: 'Add Member', headerShown: true }}
         />
 
         <MainStack.Screen

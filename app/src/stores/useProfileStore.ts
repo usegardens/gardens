@@ -21,7 +21,7 @@ interface ProfileState {
 
   fetchMyProfile(): Promise<void>;
   fetchProfile(publicKey: string): Promise<Profile | null>;
-  createOrUpdateProfile(username: string, bio: string | null, availableFor: string[]): Promise<void>;
+  createOrUpdateProfile(username: string, bio: string | null, availableFor: string[], isPublic?: boolean): Promise<void>;
   setProfilePicUri(uri: string | null): Promise<void>;
   loadProfilePicUri(): Promise<void>;
   setLocalUsername(name: string): Promise<void>;
@@ -49,8 +49,8 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     return profile ?? null;
   },
 
-  async createOrUpdateProfile(username, bio, availableFor) {
-    await dcCreateOrUpdateProfile(username, bio, availableFor);
+  async createOrUpdateProfile(username, bio, availableFor, isPublic = false) {
+    await dcCreateOrUpdateProfile(username, bio, availableFor, isPublic);
     await get().fetchMyProfile();
   },
 

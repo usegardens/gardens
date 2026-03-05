@@ -26,17 +26,7 @@ export class KeyError extends Error {
 
 // ── Phase 3 types ──────────────────────────────────────────────────────────────
 
-export interface BootstrapNode {
-  nodeIdHex: string;
-  relayUrl: string;
-}
-
 export type ConnectionStatus = 'Online' | 'Connecting' | 'Offline';
-
-/** Hardcoded for launch — update when bootstrap node is deployed. */
-export const BOOTSTRAP_NODES: BootstrapNode[] = [
-  // { nodeIdHex: '<64-hex-char-ed25519-pubkey>', relayUrl: 'https://relay.delta.app' },
-];
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
@@ -67,6 +57,7 @@ export interface OnionHopFfi {
   nextUrl: string;
 }
 
+
 export interface OnionPeeled {
   peelType: 'forward' | 'deliver';
   nextHopUrl: string | null;
@@ -84,6 +75,7 @@ export interface OrgSummary {
   coverBlobId: string | null;
   isPublic: boolean;
   creatorKey: string;
+  orgPubkey: string | null;  // Org's z32-encoded public key for pkarr
   createdAt: number;
 }
 
@@ -122,6 +114,14 @@ export interface DmThread {
   lastMessageAt: number | null;
 }
 
+/** Returned by sendMessage and createDmThread. op_bytes must be forwarded via onion routing. */
+export interface SendResult {
+  /** message_id or thread_id (op hash hex) */
+  id: string;
+  /** GossipEnvelope CBOR bytes (if you need to forward or store externally) */
+  opBytes: Uint8Array;
+}
+
 // ── Phase 5 types ──────────────────────────────────────────────────────────────
 
 export class AuthError extends Error {
@@ -154,9 +154,14 @@ interface DeltaCoreNative {
   generateKeypair(): Promise<KeyPair>;
   importFromMnemonic(words: string[]): Promise<KeyPair>;
   // Phase 2
-  initCore(privateKeyHex: string, dbDir: string, bootstrapNodes: BootstrapNode[]): Promise<void>;
+  initCore(privateKeyHex: string, dbDir: string): Promise<void>;
+  // Network
+  initNetwork(relayUrl: string | null): Promise<string>;
+  isNetworkInitialized(): Promise<boolean>;
+  getNodeId(): Promise<string>;
   createOrUpdateProfile(username: string, bio: string | null, availableFor: string[], isPublic: boolean): Promise<void>;
   getPkarrUrl(publicKeyHex: string): string;
+  getPkarrUrlFromZ32(z32Key: string): string;
   resolvePkarr(z32Key: string): Promise<PkarrResolved | null>;
   getMyProfile(): Promise<Profile | null>;
   getProfile(publicKey: string): Promise<Profile | null>;
@@ -178,19 +183,18 @@ interface DeltaCoreNative {
     embedUrl: string | null,
     mentions: string[],
     replyTo: string | null,
-  ): Promise<string>;
+  ): Promise<{ id: string; opBytesBase64: string }>;
   listMessages(
     roomId: string | null,
     dmThreadId: string | null,
     limit: number,
     beforeTimestamp: number | null,
   ): Promise<Message[]>;
-  createDmThread(recipientKey: string): Promise<string>;
+  deleteMessage(messageId: string, orgId: string | null): Promise<{ id: string; opBytesBase64: string }>;
+  createDmThread(recipientKey: string): Promise<{ id: string; opBytesBase64: string }>;
   listDmThreads(): Promise<DmThread[]>;
   // Phase 3
   getConnectionStatus(): Promise<ConnectionStatus>;
-  subscribeRoomTopic(roomId: string): Promise<void>;
-  subscribeDmTopic(threadId: string): Promise<void>;
   searchPublicOrgs(query: string): Promise<OrgSummary[]>;
   // Phase 5
   generateInviteToken(orgId: string, accessLevel: string, expiryTimestamp: number): string;
@@ -199,9 +203,19 @@ interface DeltaCoreNative {
   removeMemberFromOrg(orgId: string, memberPublicKey: string): Promise<void>;
   changeMemberPermission(orgId: string, memberPublicKey: string, newAccessLevel: string): Promise<void>;
   listOrgMembers(orgId: string): Promise<MemberInfo[]>;
+  deleteOrg(orgId: string): Promise<void>;
+  // Member moderation (stubs)
+  kickMember(orgId: string, memberPublicKey: string): Promise<void>;
+  banMember(orgId: string, memberPublicKey: string): Promise<void>;
+  unbanMember(orgId: string, memberPublicKey: string): Promise<void>;
+  muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<void>;
+  unmuteMember(orgId: string, memberPublicKey: string): Promise<void>;
   // Phase 7 — binary data is base64-encoded over the RN bridge
   uploadBlob(dataBase64: string, mimeType: string, roomId: string | null): Promise<string>;
-  getBlob(blobHash: string): Promise<string>; // returns base64
+  getBlob(blobHash: string, roomId: string | null): Promise<string>; // returns base64
+  hasBlob(blobHash: string): Promise<boolean>;
+  requestBlobFromPeer(blobHash: string, peerPublicKey: string, timeoutSecs: number): Promise<string | null>; // returns base64 or null
+  provideBlobToPeer(blobHash: string, peerPublicKey: string): Promise<void>;
   // Onion routing — bytes are base64-encoded over the RN bridge
   buildOnionPacket(hops: OnionHopFfi[], topicIdBase64: string, opBase64: string): Promise<string>; // returns base64
   peelOnionLayer(packetBase64: string, recipientSeedHex: string): Promise<{
@@ -234,8 +248,12 @@ function loadNative(): DeltaCoreNative {
         throw new Error('delta_core native module not loaded');
       },
       async initCore() { throw new Error('delta_core native module not loaded'); },
+      async initNetwork() { throw new Error('delta_core native module not loaded'); },
+      async isNetworkInitialized() { return false; },
+      async getNodeId() { throw new Error('delta_core native module not loaded'); },
       async createOrUpdateProfile() { throw new Error('delta_core not loaded'); },
       getPkarrUrl() { throw new Error('delta_core not loaded'); },
+      getPkarrUrlFromZ32() { throw new Error('delta_core not loaded'); },
       async resolvePkarr() { return null; },
       async getMyProfile() { return null; },
       async getProfile() { return null; },
@@ -250,11 +268,10 @@ function loadNative(): DeltaCoreNative {
       async unarchiveRoom() { throw new Error('delta_core not loaded'); },
       async sendMessage() { throw new Error('delta_core not loaded'); },
       async listMessages() { return []; },
+      async deleteMessage() { throw new Error('delta_core not loaded'); },
       async createDmThread() { throw new Error('delta_core not loaded'); },
       async listDmThreads() { return []; },
       async getConnectionStatus() { return 'Offline'; },
-      async subscribeRoomTopic() {},
-      async subscribeDmTopic() {},
       async searchPublicOrgs() { return []; },
       generateInviteToken() { throw new Error('delta_core not loaded'); },
       verifyInviteToken() { throw new Error('delta_core not loaded'); },
@@ -262,8 +279,17 @@ function loadNative(): DeltaCoreNative {
       async removeMemberFromOrg() { throw new Error('delta_core not loaded'); },
       async changeMemberPermission() { throw new Error('delta_core not loaded'); },
       async listOrgMembers() { return []; },
+      async deleteOrg() { throw new Error('delta_core not loaded'); },
+      async kickMember() { throw new Error('delta_core not loaded'); },
+      async banMember() { throw new Error('delta_core not loaded'); },
+      async unbanMember() { throw new Error('delta_core not loaded'); },
+      async muteMember() { throw new Error('delta_core not loaded'); },
+      async unmuteMember() { throw new Error('delta_core not loaded'); },
       async uploadBlob() { throw new Error('delta_core not loaded'); },
       async getBlob() { throw new Error('delta_core not loaded'); },
+      async hasBlob() { return false; },
+      async requestBlobFromPeer() { return null; },
+      async provideBlobToPeer() { throw new Error('delta_core not loaded'); },
       async buildOnionPacket() { throw new Error('delta_core not loaded'); },
       async peelOnionLayer() { throw new Error('delta_core not loaded'); },
     };
@@ -311,6 +337,20 @@ export function getPkarrUrl(publicKeyHex: string): string {
   } catch (err: unknown) {
     if (err instanceof Error) {
       throw new Error(`Failed to get pkarr URL: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
+/// Get pkarr URL from a z32-encoded public key (for orgs).
+/// Input: z32-encoded key (e.g., "yj4bqhvahk8dge...")
+/// Returns: `pk:<z32-encoded-pubkey>`
+export function getPkarrUrlFromZ32(z32Key: string): string {
+  try {
+    return native.getPkarrUrlFromZ32(z32Key);
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      throw new Error(`Failed to get pkarr URL from z32: ${err.message}`);
     }
     throw err;
   }
@@ -388,8 +428,9 @@ export async function sendMessage(
   embedUrl: string | null,
   mentions: string[],
   replyTo: string | null,
-): Promise<string> {
-  return native.sendMessage(roomId, dmThreadId, contentType, textContent, blobId, embedUrl, mentions, replyTo);
+): Promise<SendResult> {
+  const raw = await native.sendMessage(roomId, dmThreadId, contentType, textContent, blobId, embedUrl, mentions, replyTo);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
 export async function listMessages(
@@ -401,8 +442,14 @@ export async function listMessages(
   return native.listMessages(roomId, dmThreadId, limit, beforeTimestamp);
 }
 
-export async function createDmThread(recipientKey: string): Promise<string> {
-  return native.createDmThread(recipientKey);
+export async function deleteMessage(messageId: string, orgId?: string): Promise<SendResult> {
+  const raw = await native.deleteMessage(messageId, orgId ?? null);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
+}
+
+export async function createDmThread(recipientKey: string): Promise<SendResult> {
+  const raw = await native.createDmThread(recipientKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
 export async function listDmThreads(): Promise<DmThread[]> {
@@ -411,23 +458,24 @@ export async function listDmThreads(): Promise<DmThread[]> {
 
 // ── Phase 3 exports ───────────────────────────────────────────────────────────
 
-export async function initCore(
-  privateKeyHex: string,
-  bootstrapNodes: BootstrapNode[] = BOOTSTRAP_NODES,
-): Promise<void> {
-  return native.initCore(privateKeyHex, '', bootstrapNodes);
+export async function initCore(privateKeyHex: string): Promise<void> {
+  return native.initCore(privateKeyHex, '');
+}
+
+export async function initNetwork(relayUrl: string | null = null): Promise<string> {
+  return native.initNetwork(relayUrl);
+}
+
+export async function isNetworkInitialized(): Promise<boolean> {
+  return native.isNetworkInitialized();
+}
+
+export async function getNodeId(): Promise<string> {
+  return native.getNodeId();
 }
 
 export async function getConnectionStatus(): Promise<ConnectionStatus> {
   return native.getConnectionStatus();
-}
-
-export async function subscribeRoomTopic(roomId: string): Promise<void> {
-  return native.subscribeRoomTopic(roomId);
-}
-
-export async function subscribeDmTopic(threadId: string): Promise<void> {
-  return native.subscribeDmTopic(threadId);
 }
 
 export async function searchPublicOrgs(query: string): Promise<OrgSummary[]> {
@@ -497,6 +545,31 @@ export async function listOrgMembers(orgId: string): Promise<MemberInfo[]> {
   return native.listOrgMembers(orgId);
 }
 
+export async function deleteOrg(orgId: string): Promise<void> {
+  return native.deleteOrg(orgId);
+}
+
+// Member moderation (stubs)
+export async function kickMember(orgId: string, memberPublicKey: string): Promise<void> {
+  return native.kickMember(orgId, memberPublicKey);
+}
+
+export async function banMember(orgId: string, memberPublicKey: string): Promise<void> {
+  return native.banMember(orgId, memberPublicKey);
+}
+
+export async function unbanMember(orgId: string, memberPublicKey: string): Promise<void> {
+  return native.unbanMember(orgId, memberPublicKey);
+}
+
+export async function muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<void> {
+  return native.muteMember(orgId, memberPublicKey, durationSeconds);
+}
+
+export async function unmuteMember(orgId: string, memberPublicKey: string): Promise<void> {
+  return native.unmuteMember(orgId, memberPublicKey);
+}
+
 // ── Phase 7: Blobs ────────────────────────────────────────────────────────────
 
 export class BlobError extends Error {
@@ -519,12 +592,36 @@ export async function uploadBlob(
   return native.uploadBlob(btoa(binary), mimeType, roomId);
 }
 
-export async function getBlob(blobHash: string): Promise<Uint8Array> {
-  const base64 = await native.getBlob(blobHash);
+export async function getBlob(blobHash: string, roomId: string | null): Promise<Uint8Array> {
+  const base64 = await native.getBlob(blobHash, roomId);
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
   return bytes;
+}
+
+export async function hasBlob(blobHash: string): Promise<boolean> {
+  return native.hasBlob(blobHash);
+}
+
+export async function requestBlobFromPeer(
+  blobHash: string,
+  peerPublicKey: string,
+  timeoutSecs: number = 30,
+): Promise<Uint8Array | null> {
+  const base64 = await native.requestBlobFromPeer(blobHash, peerPublicKey, timeoutSecs);
+  if (!base64) return null;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+  return bytes;
+}
+
+export async function provideBlobToPeer(
+  blobHash: string,
+  peerPublicKey: string,
+): Promise<void> {
+  return native.provideBlobToPeer(blobHash, peerPublicKey);
 }
 
 // ── Onion routing ─────────────────────────────────────────────────────────────
