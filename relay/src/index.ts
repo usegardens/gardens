@@ -25,10 +25,6 @@ export interface Env {
 
 const MAX_BLOB_BYTES = 2 * 1024 * 1024; // 2 MB
 
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 8192;
@@ -112,14 +108,14 @@ export default {
       }
 
       // Content-address verification: sha256(body) must equal blobId
-      const computedHash = toHex(sha256(bytes));
+      const computedHash = bytesToHex(sha256(bytes));
       if (computedHash !== blobId.toLowerCase()) {
         return new Response('hash mismatch', { status: 400 });
       }
 
       const mimeType = request.headers.get('Content-Type') ?? 'application/octet-stream';
 
-      await env.PUBLIC_BLOBS.put(blobId, bytes, {
+      await env.PUBLIC_BLOBS.put(blobId.toLowerCase(), bytes, {
         metadata: { mimeType },
         expirationTtl: 60 * 60 * 24 * 90, // 90 days
       });

@@ -16,6 +16,7 @@ function verifyBlobHash(bytes: Uint8Array, blobId: string): boolean {
   return toHex(sha256(bytes)) === blobId.toLowerCase();
 }
 
+
 describe('blobId format validation', () => {
   it('accepts a valid 64-char hex SHA-256 blobId', () => {
     const content = new TextEncoder().encode('hello world');
@@ -29,6 +30,13 @@ describe('blobId format validation', () => {
 
   it('rejects blobId with non-hex characters', () => {
     expect(isValidBlobId('g'.repeat(64))).toBe(false);
+  });
+
+  it('accepts a valid blobId with uppercase hex chars', () => {
+    const content = new TextEncoder().encode('hello world');
+    // SHA-256 in uppercase — should still be accepted
+    const blobId = toHex(sha256(content)).toUpperCase();
+    expect(isValidBlobId(blobId)).toBe(true);
   });
 });
 
@@ -48,6 +56,12 @@ describe('blob hash verification', () => {
   it('rejects an all-zeros blobId for non-empty content', () => {
     const content = new TextEncoder().encode('hello');
     expect(verifyBlobHash(content, '0'.repeat(64))).toBe(false);
+  });
+
+  it('accepts bytes with uppercase blobId (case-insensitive)', () => {
+    const content = new TextEncoder().encode('hello world');
+    const blobIdUpper = toHex(sha256(content)).toUpperCase();
+    expect(verifyBlobHash(content, blobIdUpper)).toBe(true);
   });
 });
 
