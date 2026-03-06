@@ -1,5 +1,5 @@
 {
-  "name": "@delta/relay-worker",
+  "name": "@gardens/relay-worker",
   "version": "0.1.0",
   "private": true,
   "main": "src/index.ts",

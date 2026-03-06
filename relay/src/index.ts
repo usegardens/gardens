@@ -11,6 +11,7 @@
  */
 
 import { ed25519 } from '@noble/curves/ed25519';
+import { sha256 } from '@noble/hashes/sha256';
 import { peelLayer } from './onion';
 import { hexToBytes, bytesToHex } from './crypto';
 import { publishRelaySelf } from './pkarr';
@@ -20,6 +21,12 @@ export interface Env {
   SELF_URL?: string;
   SYNC: Fetcher;   // service binding to gardens-sync Worker
   PUBLIC_BLOBS: KVNamespace;
+}
+
+const MAX_BLOB_BYTES = 2 * 1024 * 1024; // 2 MB
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -82,6 +89,42 @@ export default {
       }
 
       return new Response('unknown payload type', { status: 400 });
+    }
+
+    // ── PUT /public-blob/:blobId — store a content-addressed public blob ────────
+    if (request.method === 'PUT' && url.pathname.startsWith('/public-blob/')) {
+      const blobId = url.pathname.slice('/public-blob/'.length);
+
+      // Validate blobId format (64 hex chars = SHA-256)
+      if (!/^[0-9a-f]{64}$/i.test(blobId)) {
+        return new Response('invalid blob id', { status: 400 });
+      }
+
+      const contentLength = parseInt(request.headers.get('Content-Length') ?? '0', 10);
+      if (contentLength > MAX_BLOB_BYTES) {
+        return new Response('blob too large (max 2MB)', { status: 413 });
+      }
+
+      const bytes = new Uint8Array(await request.arrayBuffer());
+
+      if (bytes.length > MAX_BLOB_BYTES) {
+        return new Response('blob too large (max 2MB)', { status: 413 });
+      }
+
+      // Content-address verification: sha256(body) must equal blobId
+      const computedHash = toHex(sha256(bytes));
+      if (computedHash !== blobId.toLowerCase()) {
+        return new Response('hash mismatch', { status: 400 });
+      }
+
+      const mimeType = request.headers.get('Content-Type') ?? 'application/octet-stream';
+
+      await env.PUBLIC_BLOBS.put(blobId, bytes, {
+        metadata: { mimeType },
+        expirationTtl: 60 * 60 * 24 * 90, // 90 days
+      });
+
+      return new Response(null, { status: 204 });
     }
 
     return new Response('not found', { status: 404 });
