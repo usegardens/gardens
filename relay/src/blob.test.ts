@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sha256 } from '@noble/hashes/sha256';
-
-// Inline the same logic as in index.ts so we can unit-test without Worker env
-const MAX_BLOB_BYTES = 2 * 1024 * 1024;
+import { BLOB_CACHE_CONTROL, MAX_BLOB_BYTES } from './blob-constants';
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -88,9 +86,9 @@ describe('blob size validation', () => {
 });
 
 describe('GET /public-blob response headers', () => {
-  it('sets immutable cache-control for content-addressed blobs', () => {
-    const cacheControl = 'public, max-age=31536000, immutable';
-    expect(cacheControl).toContain('immutable');
-    expect(cacheControl).toContain('max-age=31536000');
+  it('BLOB_CACHE_CONTROL is immutable and has 1-year max-age', () => {
+    expect(BLOB_CACHE_CONTROL).toContain('immutable');
+    expect(BLOB_CACHE_CONTROL).toContain('max-age=31536000');
+    expect(BLOB_CACHE_CONTROL).toContain('public');
   });
 });

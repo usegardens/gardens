@@ -15,6 +15,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { peelLayer } from './onion';
 import { hexToBytes, bytesToHex } from './crypto';
 import { publishRelaySelf } from './pkarr';
+import { BLOB_CACHE_CONTROL, MAX_BLOB_BYTES } from './blob-constants';
 
 export interface Env {
   RELAY_SEED_HEX: string;
@@ -22,8 +23,6 @@ export interface Env {
   SYNC: Fetcher;   // service binding to gardens-sync Worker
   PUBLIC_BLOBS: KVNamespace;
 }
-
-const MAX_BLOB_BYTES = 2 * 1024 * 1024; // 2 MB
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -143,7 +142,7 @@ export default {
       return new Response(value, {
         headers: {
           'Content-Type': metadata?.mimeType ?? 'application/octet-stream',
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': BLOB_CACHE_CONTROL,
         },
       });
     }
