@@ -219,6 +219,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             reason          TEXT,
             PRIMARY KEY (org_id, member_key)
         );
+
+        CREATE TABLE IF NOT EXISTS ignored_keys (
+            public_key  TEXT PRIMARY KEY,
+            ignored_at  INTEGER NOT NULL
+        );
         "#,
     )
     .execute(pool)
@@ -832,6 +837,42 @@ pub async fn is_muted(
     Ok(count > 0)
 }
 
+// ─── Ignore (client-side user ignore list) ───────────────────────────────────
+
+pub async fn ignore_user(pool: &SqlitePool, public_key: &str, now: i64) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO ignored_keys (public_key, ignored_at) VALUES (?, ?) ON CONFLICT(public_key) DO NOTHING"
+    )
+    .bind(public_key)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn unignore_user(pool: &SqlitePool, public_key: &str) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM ignored_keys WHERE public_key = ?")
+        .bind(public_key)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_ignored_users(pool: &SqlitePool) -> Result<Vec<String>, DbError> {
+    let rows = sqlx::query("SELECT public_key FROM ignored_keys ORDER BY ignored_at DESC")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.iter().map(|r| r.get::<String, _>("public_key")).collect())
+}
+
+pub async fn is_ignored(pool: &SqlitePool, public_key: &str) -> Result<bool, DbError> {
+    let row = sqlx::query("SELECT 1 FROM ignored_keys WHERE public_key = ? LIMIT 1")
+        .bind(public_key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.is_some())
+}
+
 // ─── Room ────────────────────────────────────────────────────────────────────
 
 pub async fn insert_room(pool: &SqlitePool, row: &RoomRow) -> Result<(), DbError> {
@@ -1130,28 +1171,28 @@ pub async fn list_messages(
     let rows = match (room_id, dm_thread_id, before_timestamp) {
         (Some(rid), _, Some(before)) => {
             sqlx::query(
-                "SELECT * FROM messages WHERE room_id = ? AND timestamp < ? AND is_deleted = 0 ORDER BY timestamp DESC LIMIT ?"
+                "SELECT * FROM messages WHERE room_id = ? AND timestamp < ? AND is_deleted = 0 AND author_key NOT IN (SELECT public_key FROM ignored_keys) ORDER BY timestamp DESC LIMIT ?"
             )
             .bind(rid).bind(before).bind(limit as i64)
             .fetch_all(pool).await?
         }
         (Some(rid), _, None) => {
             sqlx::query(
-                "SELECT * FROM messages WHERE room_id = ? AND is_deleted = 0 ORDER BY timestamp DESC LIMIT ?"
+                "SELECT * FROM messages WHERE room_id = ? AND is_deleted = 0 AND author_key NOT IN (SELECT public_key FROM ignored_keys) ORDER BY timestamp DESC LIMIT ?"
             )
             .bind(rid).bind(limit as i64)
             .fetch_all(pool).await?
         }
         (_, Some(tid), Some(before)) => {
             sqlx::query(
-                "SELECT * FROM messages WHERE dm_thread_id = ? AND timestamp < ? AND is_deleted = 0 ORDER BY timestamp DESC LIMIT ?"
+                "SELECT * FROM messages WHERE dm_thread_id = ? AND timestamp < ? AND is_deleted = 0 AND author_key NOT IN (SELECT public_key FROM ignored_keys) ORDER BY timestamp DESC LIMIT ?"
             )
             .bind(tid).bind(before).bind(limit as i64)
             .fetch_all(pool).await?
         }
         (_, Some(tid), None) => {
             sqlx::query(
-                "SELECT * FROM messages WHERE dm_thread_id = ? AND is_deleted = 0 ORDER BY timestamp DESC LIMIT ?"
+                "SELECT * FROM messages WHERE dm_thread_id = ? AND is_deleted = 0 AND author_key NOT IN (SELECT public_key FROM ignored_keys) ORDER BY timestamp DESC LIMIT ?"
             )
             .bind(tid).bind(limit as i64)
             .fetch_all(pool).await?
