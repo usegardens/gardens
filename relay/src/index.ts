@@ -1,9 +1,11 @@
+/// <reference types="@cloudflare/workers-types" />
 /**
  * Gardens Relay — Cloudflare Worker.
  *
  * Endpoints:
- *   POST /hop   — receive an onion packet, peel one layer, route it
- *   GET  /pubkey — return this relay's Ed25519 pubkey hex (for discovery)
+ *   POST /hop        — receive an onion packet, peel one layer, route it
+ *   GET  /pubkey     — return this relay's Ed25519 pubkey hex (for discovery)
+ *   POST /send-email — authenticated outbound email
  *
  * Secrets (set via `wrangler secret put`):
  *   RELAY_SEED_HEX   64 hex char Ed25519 seed
@@ -11,26 +13,65 @@
  */
 
 import { ed25519 } from '@noble/curves/ed25519';
-import { sha256 } from '@noble/hashes/sha256';
+import { blake3 } from '@noble/hashes/blake3';
 import { peelLayer } from './onion';
-import { hexToBytes, bytesToHex } from './crypto';
+import { hexToBytes, bytesToHex, bytesToBase64 } from './crypto';
 import { publishRelaySelf } from './pkarr';
 import { BLOB_CACHE_CONTROL, MAX_BLOB_BYTES } from './blob-constants';
+import PostalMime from 'postal-mime';
+import z32 from 'z32';
+import { buildMime, type OutboundEmailPayload } from './mime';
 
 export interface Env {
   RELAY_SEED_HEX: string;
   SELF_URL?: string;
-  SYNC: Fetcher;   // service binding to gardens-sync Worker
   PUBLIC_BLOBS: KVNamespace;
+  SYNC_WORKER: Fetcher;
+  RATE_LIMIT_KV: KVNamespace;
+  EMAIL: { send(msg: unknown): Promise<void> };
 }
 
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunk = 8192;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+
+const RELAY_DOMAIN = 'gardens-relay.stereos.workers.dev';
+const INBOX_SUFFIX = new TextEncoder().encode('gardens:inbox:v1');
+
+function deriveInboxTopic(z32Key: string): string {
+  const pubkey = z32.decode(z32Key);
+  const input = new Uint8Array(pubkey.length + INBOX_SUFFIX.length);
+  input.set(pubkey);
+  input.set(INBOX_SUFFIX, pubkey.length);
+  return bytesToHex(blake3(input));
+}
+
+interface EmailOp {
+  op_type: string;
+  from: string;
+  subject: string;
+  body_text: string;
+  body_html: string | null;
+  message_id: string;
+  received_at: number;
+}
+
+function encodeOp(op: EmailOp): string {
+  return btoa(JSON.stringify(op));
+}
+
+async function resolvePkarrEmail(z32Key: string): Promise<{ email: boolean; type: string } | null> {
+  try {
+    const url = `https://pkarr.pubky.org/${z32Key}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    // DNS packet starts after 72-byte header (64-byte sig + 8-byte timestamp)
+    const dnsBytes = bytes.slice(72);
+    const txtStr = new TextDecoder().decode(dnsBytes);
+    const hasEmail = txtStr.includes('email=1');
+    const isOrg = txtStr.includes('t=org');
+    return { email: hasEmail, type: isOrg ? 'org' : 'user' };
+  } catch {
+    return null;
   }
-  return btoa(binary);
 }
 
 export default {
@@ -72,15 +113,19 @@ export default {
       }
 
       if (payload.type === 'deliver') {
+        // Forward op to sync worker TopicDO for persistence and fan-out
         const topicHex = bytesToHex(payload.topicId);
-        const opBase64 = uint8ArrayToBase64(payload.op);
-
-        const resp = await env.SYNC.fetch('https://sync/deliver', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic_hex: topicHex, op_base64: opBase64 }),
-        });
-        return new Response(null, { status: resp.ok ? 200 : 502 });
+        const opBase64 = bytesToBase64(payload.op);
+        try {
+          await env.SYNC_WORKER.fetch('https://sync/deliver', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic_hex: topicHex, op_base64: opBase64 }),
+          });
+        } catch {
+          // Non-fatal: best-effort delivery to sync worker
+        }
+        return new Response(null, { status: 200 });
       }
 
       return new Response('unknown payload type', { status: 400 });
@@ -107,7 +152,7 @@ export default {
       }
 
       // Content-address verification: sha256(body) must equal blobId
-      const computedHash = bytesToHex(sha256(bytes));
+      const computedHash = bytesToHex(blake3(bytes));
       if (computedHash !== blobId.toLowerCase()) {
         return new Response('hash mismatch', { status: 400 });
       }
@@ -147,11 +192,91 @@ export default {
       });
     }
 
+    // ── POST /send-email — authenticated outbound email ────────────────────────
+    if (request.method === 'POST' && url.pathname === '/send-email') {
+      const body = await request.json() as { signed_payload: string; signature: string };
+      const { signed_payload, signature } = body;
+
+      let payload: OutboundEmailPayload;
+      try {
+        payload = JSON.parse(signed_payload) as OutboundEmailPayload;
+      } catch {
+        return new Response('invalid payload', { status: 400 });
+      }
+
+      // Freshness check — reject payloads older than 5 minutes
+      if (Date.now() - payload.timestamp > 5 * 60 * 1000) {
+        return new Response('payload expired', { status: 400 });
+      }
+
+      // Verify Ed25519 signature
+      try {
+        const pubkeyBytes = z32.decode(payload.from_z32);
+        const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+        const msgBytes = new TextEncoder().encode(signed_payload);
+        const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
+        if (!valid) return new Response('invalid signature', { status: 403 });
+      } catch {
+        return new Response('signature verification failed', { status: 403 });
+      }
+
+      // Rate limit: 50 emails/hour per from_z32
+      const rateKey = `email_rate:${payload.from_z32}`;
+      const currentCount = Number(await env.RATE_LIMIT_KV.get(rateKey) ?? 0);
+      if (currentCount >= 50) {
+        return new Response('rate limit exceeded', { status: 429 });
+      }
+      await env.RATE_LIMIT_KV.put(rateKey, String(currentCount + 1), { expirationTtl: 3600 });
+
+      // Build MIME and send
+      const rawMime = buildMime(payload);
+      const from = `${payload.from_z32}@${RELAY_DOMAIN}`;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = new (globalThis as any).EmailMessage(from, payload.to, rawMime);
+      await env.EMAIL.send(msg);
+
+      return new Response(null, { status: 200 });
+    }
+
     return new Response('not found', { status: 404 });
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const selfUrl = env.SELF_URL ?? 'https://gardens-relay.workers.dev';
     await publishRelaySelf(env.RELAY_SEED_HEX, selfUrl);
+  },
+
+  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const localPart = message.to.split('@')[0];
+
+    const record = await resolvePkarrEmail(localPart);
+    if (!record?.email) {
+      message.setReject('Recipient does not accept email');
+      return;
+    }
+
+    const parsed = await PostalMime.parse(await new Response(message.raw).arrayBuffer());
+
+    const op: EmailOp = {
+      op_type: 'receive_email',
+      from: message.from,
+      subject: parsed.subject ?? '',
+      body_text: parsed.text ?? '',
+      body_html: parsed.html ?? null,
+      message_id: parsed.messageId ?? crypto.randomUUID(),
+      received_at: Date.now(),
+    };
+
+    const topic = deriveInboxTopic(localPart);
+
+    try {
+      await env.SYNC_WORKER.fetch('https://sync/deliver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_hex: topic, op_base64: encodeOp(op) }),
+      });
+    } catch {
+      // Non-fatal
+    }
   },
 } satisfies ExportedHandler<Env>;

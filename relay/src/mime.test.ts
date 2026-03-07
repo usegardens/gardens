@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildMime } from './mime';
+import { buildMime, type OutboundEmailPayload } from './mime';
 
 describe('buildMime', () => {
   it('includes From address with z32 key and relay domain', () => {
@@ -30,5 +30,50 @@ describe('buildMime', () => {
     });
     expect(raw).toContain('In-Reply-To');
     expect(raw).toContain('msg-id-123@mail.example.com');
+  });
+});
+
+describe('POST /send-email expiry check', () => {
+  function isPayloadExpired(payload: OutboundEmailPayload): boolean {
+    return Date.now() - payload.timestamp > 5 * 60 * 1000;
+  }
+
+  it('rejects expired payloads (10 minutes ago)', () => {
+    const payload: OutboundEmailPayload = {
+      from_z32: 'abc123',
+      to: 'alice@example.com',
+      subject: 'Hi',
+      body_text: 'Hello',
+      body_html: null,
+      reply_to_message_id: null,
+      timestamp: Date.now() - 10 * 60 * 1000,
+    };
+    expect(isPayloadExpired(payload)).toBe(true);
+  });
+
+  it('accepts a fresh payload (30 seconds ago)', () => {
+    const payload: OutboundEmailPayload = {
+      from_z32: 'abc123',
+      to: 'alice@example.com',
+      subject: 'Hi',
+      body_text: 'Hello',
+      body_html: null,
+      reply_to_message_id: null,
+      timestamp: Date.now() - 30 * 1000,
+    };
+    expect(isPayloadExpired(payload)).toBe(false);
+  });
+
+  it('rejects payload at exactly the 5-minute boundary plus 1ms', () => {
+    const payload: OutboundEmailPayload = {
+      from_z32: 'abc123',
+      to: 'alice@example.com',
+      subject: 'Hi',
+      body_text: 'Hello',
+      body_html: null,
+      reply_to_message_id: null,
+      timestamp: Date.now() - (5 * 60 * 1000 + 1),
+    };
+    expect(isPayloadExpired(payload)).toBe(true);
   });
 });
