@@ -386,6 +386,18 @@ mod tests {
         let record = build_user_txt_record("alice", None, None, None, false);
         assert!(!record.contains("rl="), "expected no rl= field, got: {}", record);
     }
+
+    #[test]
+    fn user_txt_record_includes_email_when_enabled() {
+        let record = build_user_txt_record("alice", None, None, None, true);
+        assert!(record.contains("email=1"), "expected email=1, got: {}", record);
+    }
+
+    #[test]
+    fn user_txt_record_omits_email_when_disabled() {
+        let record = build_user_txt_record("alice", None, None, None, false);
+        assert!(!record.contains("email=1"), "expected no email=1, got: {}", record);
+    }
 }
 
 /// Republish all public profiles and orgs.
