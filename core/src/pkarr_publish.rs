@@ -278,6 +278,7 @@ pub struct PkarrResolvedRecord {
     pub avatar_blob_id: Option<String>,
     pub cover_blob_id: Option<String>, // for org profiles
     pub public_key: String, // z32-encoded
+    pub email: bool,
 }
 
 /// Parse a TXT record string into a structured record.
@@ -291,6 +292,7 @@ fn parse_txt_record(txt: &str, z32_key: &str) -> Result<PkarrResolvedRecord, Str
         avatar_blob_id: None,
         cover_blob_id: None,
         public_key: z32_key.to_string(),
+        email: false,
     };
     
     for part in txt.split(';') {
@@ -303,6 +305,7 @@ fn parse_txt_record(txt: &str, z32_key: &str) -> Result<PkarrResolvedRecord, Str
                 "d" => record.description = Some(value.to_string()),
                 "a" => record.avatar_blob_id = Some(value.to_string()),
                 "c" => record.cover_blob_id = Some(value.to_string()),
+                "email" => record.email = value == "1",
                 _ => {}
             }
         }
@@ -397,6 +400,20 @@ mod tests {
     fn user_txt_record_omits_email_when_disabled() {
         let record = build_user_txt_record("alice", None, None, None, false);
         assert!(!record.contains("email=1"), "expected no email=1, got: {}", record);
+    }
+
+    #[test]
+    fn parse_email_flag_present() {
+        let txt = "v=gardens1;t=user;u=alice;email=1";
+        let record = parse_txt_record(txt, "testz32key").unwrap();
+        assert!(record.email);
+    }
+
+    #[test]
+    fn parse_email_flag_absent() {
+        let txt = "v=gardens1;t=user;u=alice";
+        let record = parse_txt_record(txt, "testz32key").unwrap();
+        assert!(!record.email);
     }
 }
 

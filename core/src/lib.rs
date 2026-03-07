@@ -3237,6 +3237,7 @@ pub fn resolve_pkarr(z32_key: String) -> Result<Option<PkarrResolved>, CoreError
             avatar_blob_id: r.avatar_blob_id,
             cover_blob_id: r.cover_blob_id,
             public_key: r.public_key,
+            email: r.email,
         }))
     })
 }
@@ -3250,6 +3251,7 @@ pub struct PkarrResolved {
     pub avatar_blob_id: Option<String>,
     pub cover_blob_id: Option<String>,
     pub public_key: String,
+    pub email: bool,
 }
 
 // ── Network / Iroh P2P ───────────────────────────────────────────────────────
