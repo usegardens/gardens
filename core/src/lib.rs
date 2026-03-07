@@ -3076,7 +3076,7 @@ pub fn prepare_outbound_email(
 
     // Decode the p2panda private key into a 32-byte array.
     let private_key_bytes: [u8; 32] = hex::decode(core.private_key.to_hex())
-        .map_err(|e| CoreError::InvalidInput(e.to_string()))?
+        .map_err(|_| CoreError::InvalidInput("key decode failed".into()))?
         .try_into()
         .map_err(|_| CoreError::InvalidInput("invalid key length".into()))?;
 
@@ -3084,10 +3084,11 @@ pub fn prepare_outbound_email(
     let pkarr_keypair = pkarr::Keypair::from_secret_key(&private_key_bytes);
     let from_z32 = pkarr_keypair.to_z32();
 
-    let timestamp = std::time::SystemTime::now()
+    let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| CoreError::InvalidInput(e.to_string()))?
-        .as_millis() as i64;
+        .map_err(|_| CoreError::InvalidInput("system time before epoch".into()))?;
+    let timestamp = i64::try_from(duration.as_millis())
+        .map_err(|_| CoreError::InvalidInput("timestamp overflow".into()))?;
 
     let payload = serde_json::json!({
         "from_z32": from_z32,
