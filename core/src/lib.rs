@@ -2344,6 +2344,36 @@ pub fn list_dm_threads() -> Vec<DmThread> {
     })
 }
 
+pub fn accept_message_request(thread_id: String) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        sqlx::query("UPDATE dm_threads SET is_request = 0 WHERE thread_id = ?")
+            .bind(&thread_id)
+            .execute(&core.read_pool)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        Ok(())
+    })
+}
+
+pub fn decline_message_request(thread_id: String) -> Result<(), AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        // Delete messages first (FK constraint)
+        sqlx::query("DELETE FROM messages WHERE dm_thread_id = ?")
+            .bind(&thread_id)
+            .execute(&core.read_pool)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        sqlx::query("DELETE FROM dm_threads WHERE thread_id = ?")
+            .bind(&thread_id)
+            .execute(&core.read_pool)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        Ok(())
+    })
+}
+
 async fn room_gossip_context(
     core: &store::GardensCore,
     room_id: &str,

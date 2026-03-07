@@ -152,6 +152,7 @@ export interface DmThread {
   recipientKey: string;
   createdAt: number;
   lastMessageAt: number | null;
+  isRequest: boolean;
 }
 
 /** Returned by sendMessage and createDmThread. op_bytes must be forwarded via onion routing. */
@@ -263,6 +264,8 @@ interface GardensCoreNative {
   deleteMessage(messageId: string, orgId: string | null): Promise<{ id: string; opBytesBase64: string }>;
   createDmThread(recipientKey: string): Promise<{ id: string; opBytesBase64: string }>;
   listDmThreads(): Promise<DmThread[]>;
+  acceptMessageRequest(threadId: string): Promise<void>;
+  declineMessageRequest(threadId: string): Promise<void>;
   // Phase 3
   getConnectionStatus(): Promise<ConnectionStatus>;
   searchPublicOrgs(query: string): Promise<OrgSummary[]>;
@@ -370,6 +373,8 @@ function loadNative(): GardensCoreNative {
       async deleteMessage() { throw new Error('gardens_core not loaded'); },
       async createDmThread() { throw new Error('gardens_core not loaded'); },
       async listDmThreads() { return []; },
+      async acceptMessageRequest() { throw new Error('gardens_core not loaded'); },
+      async declineMessageRequest() { throw new Error('gardens_core not loaded'); },
       async getConnectionStatus() { return 'Offline'; },
       async searchPublicOrgs() { return []; },
       generateInviteToken() { throw new Error('gardens_core not loaded'); },
@@ -648,6 +653,14 @@ export async function createDmThread(recipientKey: string): Promise<SendResult> 
 
 export async function listDmThreads(): Promise<DmThread[]> {
   return native.listDmThreads();
+}
+
+export async function acceptMessageRequest(threadId: string): Promise<void> {
+  return native.acceptMessageRequest(threadId);
+}
+
+export async function declineMessageRequest(threadId: string): Promise<void> {
+  return native.declineMessageRequest(threadId);
 }
 
 // ── Phase 3 exports ───────────────────────────────────────────────────────────
