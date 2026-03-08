@@ -10,6 +10,8 @@ import {
   Alert,
   Clipboard,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LOCATION_STORAGE_KEY } from '../sheets/LocationPickerSheet';
 import { SheetManager } from 'react-native-actions-sheet';
 import { PublicIdentityCard } from '../components/PublicIdentityCard';
 import { useProfileStore, type Profile } from '../stores/useProfileStore';
@@ -92,6 +94,7 @@ export function UserSettingsScreen() {
   const [isPublic, setIsPublic] = useState(false);
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [pkarrUrl, setPkarrUrl] = useState<string | null>(null);
+  const [location, setLocation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -119,6 +122,7 @@ export function UserSettingsScreen() {
 
   useEffect(() => {
     loadProfile();
+    AsyncStorage.getItem(LOCATION_STORAGE_KEY).then(v => setLocation(v)).catch(() => {});
   }, [loadProfile]);
 
   useEffect(() => {
@@ -258,10 +262,20 @@ export function UserSettingsScreen() {
           onChange={(v) => setDnd(v)}
         />
         <SettingsRow
-          label="Available For"
-          description="What you're open to"
-          value={availableFor}
-          onPress={openEditAvailableFor}
+          label="Interests"
+          description={profile?.availableFor?.length ? profile.availableFor.slice(0, 3).join(', ') + (profile.availableFor.length > 3 ? '…' : '') : 'Not set'}
+          onPress={() => SheetManager.show('interests-sheet')}
+        />
+        <SettingsRow
+          label="Location"
+          description={location ?? 'Not set'}
+          onPress={() => {
+            SheetManager.show('location-picker-sheet');
+            // Refresh after sheet closes
+            setTimeout(() => {
+              AsyncStorage.getItem(LOCATION_STORAGE_KEY).then(v => setLocation(v)).catch(() => {});
+            }, 1000);
+          }}
         />
       </Section>
 
@@ -349,11 +363,6 @@ export function UserSettingsScreen() {
           label="Backup Seed Phrase" 
           description="View your recovery phrase"
           onPress={openBackupSeed}
-        />
-        <SettingsRow 
-          label="Biometric Lock" 
-          description="Require biometric authentication"
-          value="Enabled"
         />
       </Section>
 
