@@ -16,6 +16,7 @@ import { useProfileStore } from '../stores/useProfileStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useInboxStore } from '../stores/useInboxStore';
 import { useSyncStore, deriveInboxTopicHex } from '../stores/useSyncStore';
+import { useMessagesStore } from '../stores/useMessagesStore';
 import { BlobImage } from '../components/BlobImage';
 import { SheetManager } from 'react-native-actions-sheet';
 
@@ -55,6 +56,7 @@ export function HomeScreen({ navigation }: Props) {
   const { keypair } = useAuthStore();
   const { unreadCount } = useInboxStore();
   const { subscribe, unsubscribe, opTick } = useSyncStore();
+  const { messages } = useMessagesStore();
   const [loading, setLoading] = useState(true);
 
   const inboxTopic = keypair?.publicKeyHex ? deriveInboxTopicHex(keypair.publicKeyHex) : null;
@@ -163,9 +165,27 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
               <Text style={styles.time}>{formatTime(item.lastMessageAt)}</Text>
             </View>
-            <Text style={styles.sub} numberOfLines={1}>
-              {item.lastMessageAt ? 'Conversation' : 'No messages yet'}
-            </Text>
+            {(() => {
+              const threadMsgs = messages[item.threadId] ?? [];
+              const last = threadMsgs[threadMsgs.length - 1];
+              let preview = 'No messages yet';
+              if (last) {
+                if (last.contentType === 'text' && last.textContent) {
+                  preview = last.textContent;
+                } else if (last.contentType === 'image') {
+                  preview = '📷 Image';
+                } else if (last.contentType === 'audio') {
+                  preview = '🎤 Voice message';
+                } else if (last.contentType === 'gif') {
+                  preview = 'GIF';
+                } else if (last.contentType === 'video') {
+                  preview = '🎥 Video';
+                }
+              }
+              return (
+                <Text style={styles.sub} numberOfLines={1}>{preview}</Text>
+              );
+            })()}
           </View>
         </TouchableOpacity>
       );
