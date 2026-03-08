@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { sendMessage as nativeSendMessage, listMessages, deleteMessage as nativeDeleteMessage, listReactions, addReaction, removeReaction, type Reaction } from '../ffi/gardensCore';
 import { broadcastOp } from './useSyncStore';
+import { setDmProfile } from './useDmProfileStore';
+import { useProfileStore } from './useProfileStore';
 
 export interface Message {
   messageId: string;
@@ -62,8 +64,47 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       beforeTimestamp ?? null,
     );
     const key = contextKey(roomId, dmThreadId);
+
+    // Split out profile-exchange messages — store them in KV, never render them.
+    const profileMsgs = msgs.filter(m => m.contentType === 'profile');
+    const visibleMsgs = msgs.filter(m => m.contentType !== 'profile');
+
+    for (const pm of profileMsgs) {
+      try {
+        const data = JSON.parse(pm.textContent ?? '{}') as {
+          username?: string;
+          avatarBlobId?: string | null;
+        };
+        if (data.username) {
+          await setDmProfile({
+            publicKey: pm.authorKey,
+            username: data.username,
+            avatarBlobId: data.avatarBlobId ?? null,
+          });
+          // Hydrate in-memory profile cache immediately
+          useProfileStore.setState(s => ({
+            profileCache: {
+              ...s.profileCache,
+              [pm.authorKey]: {
+                publicKey: pm.authorKey,
+                username: data.username!,
+                avatarBlobId: data.avatarBlobId ?? null,
+                bio: null,
+                availableFor: [],
+                isPublic: false,
+                createdAt: pm.timestamp,
+                updatedAt: pm.timestamp,
+              },
+            },
+          }));
+        }
+      } catch {
+        // malformed profile message — ignore
+      }
+    }
+
     // Oldest-first for display.
-    set(s => ({ messages: { ...s.messages, [key]: [...msgs].reverse() as Message[] } }));
+    set(s => ({ messages: { ...s.messages, [key]: [...visibleMsgs].reverse() as Message[] } }));
 
     const messageIds = msgs.map(m => m.messageId);
     if (messageIds.length > 0) {
