@@ -7,7 +7,7 @@ export interface Message {
   roomId: string | null;
   dmThreadId: string | null;
   authorKey: string;
-  contentType: 'text' | 'audio' | 'image' | 'gif' | 'video' | 'embed';
+  contentType: 'text' | 'audio' | 'image' | 'gif' | 'video' | 'embed' | 'profile';
   textContent: string | null;
   blobId: string | null;
   embedUrl: string | null;
