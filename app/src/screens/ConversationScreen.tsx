@@ -20,6 +20,9 @@ import { useSyncStore, broadcastOp } from '../stores/useSyncStore';
 import { hasProfileBeenSent, markProfileSent } from '../stores/useDmProfileStore';
 import { sendMessage as nativeSendMessage } from '../ffi/gardensCore';
 
+// In-flight guard: prevents duplicate profile sends if user taps quickly
+const profileSendInFlight = new Set<string>();
+
 type Props = NativeStackScreenProps<any, 'Conversation'>;
 
 export function ConversationScreen({ route, navigation }: Props) {
@@ -90,12 +93,15 @@ export function ConversationScreen({ route, navigation }: Props) {
 
   async function sendProfileIfNeeded() {
     if (!myProfile?.username) return;
+    if (profileSendInFlight.has(threadId)) return;
     const alreadySent = await hasProfileBeenSent(threadId);
     if (alreadySent) return;
+    profileSendInFlight.add(threadId);
     const profilePayload = JSON.stringify({
       username: myProfile.username,
       avatarBlobId: myProfile.avatarBlobId ?? null,
     });
+    // Profile messages are metadata-only — not fetched back into local message state.
     try {
       const profileResult = await nativeSendMessage(
         null, threadId, 'profile', profilePayload, null, null, [], null,
@@ -104,6 +110,8 @@ export function ConversationScreen({ route, navigation }: Props) {
       await markProfileSent(threadId);
     } catch {
       // best-effort
+    } finally {
+      profileSendInFlight.delete(threadId);
     }
   }
 
