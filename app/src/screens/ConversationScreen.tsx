@@ -16,7 +16,9 @@ import { extractMentions } from '../components/MessageText';
 import { useMessagesStore } from '../stores/useMessagesStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import { sendDMPushNotification } from '../services/pushNotifications';
-import { useSyncStore } from '../stores/useSyncStore';
+import { useSyncStore, broadcastOp } from '../stores/useSyncStore';
+import { hasProfileBeenSent, markProfileSent } from '../stores/useDmProfileStore';
+import { sendMessage as nativeSendMessage } from '../ffi/gardensCore';
 
 type Props = NativeStackScreenProps<any, 'Conversation'>;
 
@@ -86,8 +88,28 @@ export function ConversationScreen({ route, navigation }: Props) {
     }
   }
 
+  async function sendProfileIfNeeded() {
+    if (!myProfile?.username) return;
+    const alreadySent = await hasProfileBeenSent(threadId);
+    if (alreadySent) return;
+    const profilePayload = JSON.stringify({
+      username: myProfile.username,
+      avatarBlobId: myProfile.avatarBlobId ?? null,
+    });
+    try {
+      const profileResult = await nativeSendMessage(
+        null, threadId, 'profile', profilePayload, null, null, [], null,
+      );
+      if (profileResult.opBytes?.length) broadcastOp(threadId, profileResult.opBytes);
+      await markProfileSent(threadId);
+    } catch {
+      // best-effort
+    }
+  }
+
   async function handleSend(text: string) {
     try {
+      await sendProfileIfNeeded();
       await sendMessage({
         dmThreadId: threadId,
         contentType: 'text',
@@ -110,6 +132,7 @@ export function ConversationScreen({ route, navigation }: Props) {
 
   async function handleSendBlob(blobId: string, _mimeType: string, contentType: 'image' | 'video') {
     try {
+      await sendProfileIfNeeded();
       await sendMessage({ dmThreadId: threadId, contentType, blobId, replyTo: replyingTo });
       setReplyingTo(null);
       await loadMessages();
@@ -121,6 +144,7 @@ export function ConversationScreen({ route, navigation }: Props) {
 
   async function handleSendAudio(blobId: string) {
     try {
+      await sendProfileIfNeeded();
       await sendMessage({ dmThreadId: threadId, contentType: 'audio', blobId, replyTo: replyingTo });
       setReplyingTo(null);
       await loadMessages();
@@ -132,6 +156,7 @@ export function ConversationScreen({ route, navigation }: Props) {
 
   async function handleSendGif(embedUrl: string) {
     try {
+      await sendProfileIfNeeded();
       await sendMessage({ dmThreadId: threadId, contentType: 'gif', embedUrl, replyTo: replyingTo });
       setReplyingTo(null);
       await loadMessages();

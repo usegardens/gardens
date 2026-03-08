@@ -3,10 +3,11 @@ import {
   listDmThreads as dcListDmThreads,
   createDmThread as dcCreateDmThread,
   deleteConversation as dcDeleteConversation,
+  sendMessage,
   type DmThread,
 } from '../ffi/gardensCore';
 import { broadcastOp, deriveInboxTopicHex } from './useSyncStore';
-import { DEFAULT_RELAY_URL } from './useProfileStore';
+import { DEFAULT_RELAY_URL, useProfileStore } from './useProfileStore';
 
 interface ConversationsState {
   conversations: DmThread[];
@@ -33,6 +34,24 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
   async createConversation(recipientKey: string) {
     const result = await dcCreateDmThread(recipientKey);
     await get().fetchConversations();
+    // Send our profile to the new thread so the recipient can identify us
+    const myProfile = useProfileStore.getState().myProfile;
+    if (myProfile?.username) {
+      const profilePayload = JSON.stringify({
+        username: myProfile.username,
+        avatarBlobId: myProfile.avatarBlobId ?? null,
+      });
+      try {
+        const profileResult = await sendMessage(
+          null, result.id, 'profile', profilePayload, null, null, [], null,
+        );
+        if (profileResult.opBytes?.length) {
+          broadcastOp(result.id, profileResult.opBytes);
+        }
+      } catch {
+        // profile message is best-effort
+      }
+    }
     if (result.opBytes?.length) {
       const inboxTopic = deriveInboxTopicHex(recipientKey);
       console.log(`[conversations] broadcasting DM_THREAD op to inbox topic=${inboxTopic.slice(0, 16)}… threadId=${result.id}`);
