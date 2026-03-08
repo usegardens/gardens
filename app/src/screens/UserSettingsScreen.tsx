@@ -176,15 +176,6 @@ export function UserSettingsScreen() {
     }
   };
 
-  const openEditAvailableFor = () => {
-    try {
-      (SheetManager as any).show('edit-available-for-sheet');
-    } catch (err: any) {
-      console.error('[UserSettings] Error opening edit-available-for-sheet:', err);
-      Alert.alert('Error', `Failed to open: ${err.message}`);
-    }
-  };
-
   const openBackupSeed = () => {
     try {
       (SheetManager as any).show('backup-seed-sheet');
@@ -215,9 +206,6 @@ export function UserSettingsScreen() {
   // Get current values for display
   const displayName = profile?.username || localUsername || 'Not set';
   const bio = profile?.bio || 'Not set';
-  const availableFor = profile?.availableFor?.length
-    ? `${profile.availableFor.length} tags`
-    : 'Not set';
   const myPublicKeyZ32 = pkarrUrl?.startsWith('pk:') ? pkarrUrl.slice(3) : null;
 
   if (loading) {
