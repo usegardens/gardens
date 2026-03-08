@@ -11,15 +11,18 @@
 
 import { create } from 'zustand';
 import * as Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { generateKeypair, importFromMnemonic, initCore, initNetwork, type KeyPair } from '../ffi/gardensCore';
 
 const KEYCHAIN_SERVICE = 'gardens.privateKey';
 const PUBKEY_SERVICE   = 'gardens.publicKey';
 const MNEMONIC_SERVICE = 'gardens.mnemonic';
+const HAS_ACCOUNT_KEY  = 'gardens.hasAccount';
 
 interface AuthState {
   keypair: KeyPair | null;
   isUnlocked: boolean | null;
+  hasStoredKey: boolean;
 
   /** Generate a new keypair, persist to Keychain, mark unlocked. */
   createAccount(): Promise<KeyPair>;
@@ -35,6 +38,12 @@ interface AuthState {
 
   /** Lock the session (keypair stays in Keychain; clears in-memory copy). */
   lock(): void;
+
+  /**
+   * Reads AsyncStorage to determine if an account exists without
+   * triggering a biometric prompt. Call once on app start.
+   */
+  checkHasStoredKey(): Promise<void>;
 }
 
 async function persistKeypair(kp: KeyPair): Promise<void> {
@@ -53,13 +62,20 @@ async function persistKeypair(kp: KeyPair): Promise<void> {
 export const useAuthStore = create<AuthState>((set) => ({
   keypair: null,
   isUnlocked: null,
+  hasStoredKey: false,
+
+  async checkHasStoredKey() {
+    const val = await AsyncStorage.getItem(HAS_ACCOUNT_KEY);
+    set({ hasStoredKey: val === 'true' });
+  },
 
   async createAccount() {
     const kp = await generateKeypair();
     await persistKeypair(kp);
     await initCore(kp.privateKeyHex);
     await initNetwork(null);
-    set({ keypair: kp, isUnlocked: true });
+    await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true');
+    set({ keypair: kp, isUnlocked: true, hasStoredKey: true });
     return kp;
   },
 
@@ -68,7 +84,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     await persistKeypair(kp);
     await initCore(kp.privateKeyHex);
     await initNetwork(null);
-    set({ keypair: kp, isUnlocked: true });
+    await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true');
+    set({ keypair: kp, isUnlocked: true, hasStoredKey: true });
     return kp;
   },
 
