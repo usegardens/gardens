@@ -59,6 +59,8 @@ async function persistKeypair(kp: KeyPair): Promise<void> {
   });
 }
 
+let biometricInFlight = false;
+
 export const useAuthStore = create<AuthState>((set) => ({
   keypair: null,
   isUnlocked: null,
@@ -90,6 +92,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   async unlockWithBiometric() {
+    if (biometricInFlight) return false;
+    biometricInFlight = true;
     try {
       const result = await Keychain.getGenericPassword({
         service: KEYCHAIN_SERVICE,
@@ -118,6 +122,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       set({ isUnlocked: false });
       return false;
+    } finally {
+      biometricInFlight = false;
     }
   },
 

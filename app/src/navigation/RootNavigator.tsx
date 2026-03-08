@@ -316,6 +316,7 @@ export function RootNavigator() {
   useEffect(() => {
     function handleAppStateChange(nextState: AppStateStatus) {
       if (nextState === 'background' || nextState === 'inactive') {
+        if (lockTimer.current) clearTimeout(lockTimer.current);
         lockTimer.current = setTimeout(() => {
           lock();
         }, 30_000);
