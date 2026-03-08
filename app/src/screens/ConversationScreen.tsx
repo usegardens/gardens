@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
-import { MessageBubble } from '../components/MessageBubble';
+import { ChannelMessage } from '../components/ChannelMessage';
 import { MessageComposer } from '../components/MessageComposer';
 import { extractMentions } from '../components/MessageText';
 import { useMessagesStore } from '../stores/useMessagesStore';
@@ -28,7 +28,7 @@ type Props = NativeStackScreenProps<any, 'Conversation'>;
 export function ConversationScreen({ route, navigation }: Props) {
   const { threadId, recipientKey } = route.params as { threadId: string; recipientKey: string };
   const { messages, fetchMessages, sendMessage, deleteMessage } = useMessagesStore();
-  const { myProfile, profileCache, fetchProfile } = useProfileStore();
+  const { myProfile, profileCache, fetchProfile, profilePicUri } = useProfileStore();
   const { subscribe, unsubscribe, opTick } = useSyncStore();
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
@@ -37,6 +37,11 @@ export function ConversationScreen({ route, navigation }: Props) {
   const contextKey = threadId;
   const messageList = messages[contextKey] || [];
   const recipientProfile = profileCache[recipientKey];
+
+  const messageByIdRef = useRef<Map<string, typeof messageList[0]>>(new Map());
+  useEffect(() => {
+    messageByIdRef.current = new Map(messageList.map(m => [m.messageId, m]));
+  }, [messageList]);
 
   useEffect(() => {
     fetchProfile(recipientKey);
@@ -245,16 +250,44 @@ export function ConversationScreen({ route, navigation }: Props) {
           data={messageList}
           keyExtractor={item => item.messageId}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => {
+          renderItem={({ item, index }) => {
+            const prev = index > 0 ? messageList[index - 1] : null;
+            const isGrouped = prev?.authorKey === item.authorKey;
             const isOwn = item.authorKey === myProfile?.publicKey;
-            const avatarBlobId = isOwn
-              ? myProfile?.avatarBlobId ?? null
-              : profileCache[item.authorKey]?.avatarBlobId ?? profileCache[recipientKey]?.avatarBlobId ?? null;
+            const profile = profileCache[item.authorKey];
+            const authorUsername = isOwn
+              ? (myProfile?.username ?? item.authorKey.slice(0, 8))
+              : (profile?.username ?? item.authorKey.slice(0, 8));
+            const authorAvatarBlobId = isOwn
+              ? (myProfile?.avatarBlobId ?? null)
+              : (profile?.avatarBlobId ?? null);
+            const authorAvatarUri = isOwn ? profilePicUri : null;
+
+            const replyToMsg = item.replyTo ? messageByIdRef.current.get(item.replyTo) : null;
+            const replyProfile = replyToMsg ? profileCache[replyToMsg.authorKey] : null;
+            const replyToUsername = replyToMsg
+              ? (replyProfile?.username ?? replyToMsg.authorKey.slice(0, 8))
+              : null;
+            const replyToPreview = replyToMsg && replyToUsername ? {
+              username: replyToUsername,
+              isDeleted: replyToMsg.isDeleted,
+              text: replyToMsg.textContent
+                ?? (replyToMsg.contentType === 'image' ? 'Image'
+                  : replyToMsg.contentType === 'audio' ? 'Voice message'
+                  : replyToMsg.contentType === 'gif' ? 'GIF'
+                  : replyToMsg.contentType === 'video' ? 'Video'
+                  : 'Message'),
+            } : null;
+
             return (
-              <MessageBubble
+              <ChannelMessage
                 message={item}
                 isOwnMessage={isOwn}
-                avatarBlobId={avatarBlobId}
+                isGrouped={isGrouped}
+                authorUsername={authorUsername}
+                authorAvatarBlobId={authorAvatarBlobId}
+                authorAvatarUri={authorAvatarUri}
+                replyToPreview={replyToPreview}
                 onReply={() => handleReply(item.messageId)}
                 onLongPress={() => handleLongPress(item)}
               />
