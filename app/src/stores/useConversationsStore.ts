@@ -36,6 +36,13 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
     await get().fetchConversations();
     // Send our profile to the new thread so the recipient can identify us
     const myProfile = useProfileStore.getState().myProfile;
+    if (result.opBytes?.length) {
+      const inboxTopic = deriveInboxTopicHex(recipientKey);
+      console.log(`[conversations] broadcasting DM_THREAD op to inbox topic=${inboxTopic.slice(0, 16)}… threadId=${result.id}`);
+      broadcastOp(inboxTopic, result.opBytes);
+    } else {
+      console.warn('[conversations] createConversation returned no opBytes — op will not reach recipient');
+    }
     if (myProfile?.username) {
       const profilePayload = JSON.stringify({
         username: myProfile.username,
@@ -51,13 +58,6 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
       } catch {
         // profile message is best-effort
       }
-    }
-    if (result.opBytes?.length) {
-      const inboxTopic = deriveInboxTopicHex(recipientKey);
-      console.log(`[conversations] broadcasting DM_THREAD op to inbox topic=${inboxTopic.slice(0, 16)}… threadId=${result.id}`);
-      broadcastOp(inboxTopic, result.opBytes);
-    } else {
-      console.warn('[conversations] createConversation returned no opBytes — op will not reach recipient');
     }
     // Push notification so recipient sees the request even when backgrounded
     fetch(`${DEFAULT_RELAY_URL}/push/notify`, {

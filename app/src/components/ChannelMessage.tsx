@@ -241,8 +241,8 @@ export function ChannelMessage({
           <Image source={{ uri: message.embedUrl }} style={styles.media} resizeMode="cover" />
         )}
 
-        {message.contentType === 'video' && message.blobId && message.roomId && (
-          <BlobVideo blobHash={message.blobId} topicHex={message.roomId} style={styles.media} />
+        {message.contentType === 'video' && message.blobId && (message.roomId ?? message.dmThreadId) && (
+          <BlobVideo blobHash={message.blobId} topicHex={(message.roomId ?? message.dmThreadId)!} style={styles.media} />
         )}
 
         {message.editedAt && <Text style={styles.edited}>(edited)</Text>}
