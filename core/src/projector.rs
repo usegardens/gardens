@@ -20,8 +20,9 @@ use sqlx::SqlitePool;
 
 use crate::db::{self, MessageRow, OrgRow, ProfileRow, RoomRow, DmThreadRow, EventRow};
 use crate::encryption::{Id, get_encryption};
-use crate::ops::{decode_cbor, log_ids, MessageOp, OrgOp, OrgUpdateOp, ProfileOp, ReactionOp, RoomOp, RoomDeleteOp, RoomUpdateOp, DmThreadOp, DeleteConversationOp, EventOp, EventUpdateOp, EventDeleteOp, EventRsvpOp};
+use crate::ops::{decode_cbor, log_ids, MessageOp, OrgOp, OrgUpdateOp, ProfileOp, ReactionOp, RoomOp, RoomDeleteOp, RoomUpdateOp, DmThreadOp, DeleteConversationOp, EventOp, EventUpdateOp, EventDeleteOp, EventRsvpOp, OrgAdminThreadOp};
 use crate::store::get_core;
+use crate::auth::{self, AccessLevel};
 
 fn now_micros() -> i64 {
     SystemTime::now()
@@ -101,6 +102,16 @@ pub async fn project_tick(read_pool: &SqlitePool) -> Result<(), Box<dyn std::err
                     }
                     log_ids::DM_THREAD => {
                         project_dm_thread(
+                            read_pool,
+                            &pk_hex,
+                            &op_hash_hex,
+                            &body_bytes,
+                            now_micros(),
+                        )
+                        .await
+                    }
+                    log_ids::ORG_ADMIN_THREAD => {
+                        project_org_admin_thread(
                             read_pool,
                             &pk_hex,
                             &op_hash_hex,
@@ -559,15 +570,120 @@ async fn project_dm_thread(
     Ok(())
 }
 
+async fn project_org_admin_thread(
+    pool: &SqlitePool,
+    author_key: &str,
+    op_hash: &str,
+    body: &[u8],
+    now: i64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let op: OrgAdminThreadOp = decode_cbor(body)?;
+    if op.op_type != "create_thread" {
+        return Ok(());
+    }
+
+    let local_key = crate::store::get_core()
+        .map(|c| c.public_key_hex.clone())
+        .unwrap_or_default();
+    let local_access = db::get_membership_access_level(pool, &op.org_id, &local_key).await?;
+    let author_access = db::get_membership_access_level(pool, &op.org_id, author_key).await?;
+    let local_is_manager = matches!(local_access.as_deref(), Some("manage"));
+    let author_is_manager = matches!(author_access.as_deref(), Some("manage"));
+    let is_request = local_is_manager && !author_is_manager;
+
+    db::insert_org_admin_thread(
+        pool,
+        &db::OrgAdminThreadRow {
+            thread_id: op_hash.to_string(),
+            org_id: op.org_id,
+            initiator_key: author_key.to_string(),
+            participant_key: author_key.to_string(),
+            admin_key: op.admin_key,
+            created_at: now,
+            last_message_at: None,
+            is_request,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// Load membership state for an org to check permissions
+async fn load_org_membership_state(
+    pool: &SqlitePool,
+    org_id: &str,
+) -> Result<auth::MembershipState, Box<dyn std::error::Error + Send + Sync>> {
+    let mut state = auth::MembershipState::new(org_id.to_string());
+    let members = db::list_org_members(pool, org_id).await?;
+    for (public_key, access_level) in members {
+        if let Some(level) = AccessLevel::from_str(&access_level) {
+            if let Ok(pk_bytes) = hex::decode(&public_key) {
+                if let Ok(pk_array) = pk_bytes.as_slice().try_into() {
+                    if let Ok(pk) = p2panda_core::PublicKey::from_bytes(&pk_array) {
+                        state.add_member(pk, level);
+                    }
+                }
+            }
+        }
+    }
+    Ok(state)
+}
+
+/// Operations that require Manage-level permission
+const MODERATION_OPS: &[&str] = &[
+    "kick_member",
+    "ban_member",
+    "unban_member",
+    "mute_member",
+    "unmute_member",
+    "remove_member",
+    "change_permission",
+    "set_user_cooldown",
+    "ice_member",
+    "unice_member",
+];
+
 async fn project_membership(
     pool: &SqlitePool,
-    _author_key: &str,
+    author_key: &str,
     body: &[u8],
     now: i64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use crate::ops::MembershipOp;
     
     let op: MembershipOp = decode_cbor(body)?;
+    
+    // Validate permissions for moderation operations
+    let requires_manage = MODERATION_OPS.contains(&op.op_type.as_str());
+    
+    if requires_manage {
+        let state = load_org_membership_state(pool, &op.org_id).await?;
+        let author_pubkey = match hex::decode(author_key)
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .and_then(|arr| p2panda_core::PublicKey::from_bytes(&arr).ok()) {
+            Some(pk) => pk,
+            None => {
+                log::warn!("[projector] Invalid author key in membership op: {}", author_key);
+                return Ok(());
+            }
+        };
+        
+        if !state.has_permission(&author_pubkey, AccessLevel::Manage) {
+            log::warn!(
+                "[projector] Rejected {} op from unauthorized author {} in org {}",
+                op.op_type, author_key, op.org_id
+            );
+            return Ok(());
+        }
+    }
+    
+    // Get moderator key for audit log (fallback to author_key if not set)
+    let moderator_key = if op.moderator_key.is_empty() {
+        author_key.to_string()
+    } else {
+        op.moderator_key.clone()
+    };
     
     match op.op_type.as_str() {
         "add_member" => {
@@ -582,13 +698,95 @@ async fn project_membership(
                 .await?;
             }
         }
-        "remove_member" => {
+        "remove_member" | "kick_member" => {
             let query = "DELETE FROM memberships WHERE org_id = ? AND member_key = ?";
             sqlx::query(query)
                 .bind(&op.org_id)
                 .bind(&op.member_key)
                 .execute(pool)
                 .await?;
+            
+            // Add audit log entry
+            db::insert_audit_log(
+                pool,
+                &op.org_id,
+                &moderator_key,
+                &op.member_key,
+                &op.op_type,
+                None,
+                now,
+            ).await.ok(); // Best effort
+        }
+        "ban_member" => {
+            // Add to ban list
+            db::ban_member(pool, &op.org_id, &op.member_key, &moderator_key, now, None).await?;
+            // Also remove from memberships
+            let query = "DELETE FROM memberships WHERE org_id = ? AND member_key = ?";
+            sqlx::query(query)
+                .bind(&op.org_id)
+                .bind(&op.member_key)
+                .execute(pool)
+                .await?;
+            // Bump room epochs so banned user can't decrypt future messages
+            db::bump_room_epochs_for_org(pool, &op.org_id).await.ok();
+            
+            db::insert_audit_log(
+                pool,
+                &op.org_id,
+                &moderator_key,
+                &op.member_key,
+                "ban_member",
+                None,
+                now,
+            ).await.ok();
+        }
+        "unban_member" => {
+            db::unban_member(pool, &op.org_id, &op.member_key).await?;
+            
+            db::insert_audit_log(
+                pool,
+                &op.org_id,
+                &moderator_key,
+                &op.member_key,
+                "unban_member",
+                None,
+                now,
+            ).await.ok();
+        }
+        "mute_member" => {
+            let expires_at = op.cooldown_secs.map(|secs| now + (secs * 1_000_000));
+            db::mute_member(
+                pool,
+                &op.org_id,
+                &op.member_key,
+                &moderator_key,
+                now,
+                expires_at.unwrap_or(now + 3600_000_000), // default 1 hour
+                None,
+            ).await?;
+            
+            db::insert_audit_log(
+                pool,
+                &op.org_id,
+                &moderator_key,
+                &op.member_key,
+                "mute_member",
+                op.cooldown_secs.map(|s| format!("{}s", s)).as_deref(),
+                now,
+            ).await.ok();
+        }
+        "unmute_member" => {
+            db::unmute_member(pool, &op.org_id, &op.member_key).await?;
+            
+            db::insert_audit_log(
+                pool,
+                &op.org_id,
+                &moderator_key,
+                &op.member_key,
+                "unmute_member",
+                None,
+                now,
+            ).await.ok();
         }
         "change_permission" => {
             if let Some(access_level) = op.access_level {
@@ -600,6 +798,16 @@ async fn project_membership(
                     now,
                 )
                 .await?;
+                
+                db::insert_audit_log(
+                    pool,
+                    &op.org_id,
+                    &moderator_key,
+                    &op.member_key,
+                    "change_permission",
+                    Some(&access_level),
+                    now,
+                ).await.ok();
             }
         }
         "set_user_cooldown" => {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getMyProfile,
   getProfile,
@@ -10,10 +11,12 @@ import {
   type Profile,
 } from '../ffi/gardensCore';
 import { getDmProfile } from './useDmProfileStore';
+import { useAuthStore } from './useAuthStore';
 
 export type { Profile };
 
-export const DEFAULT_RELAY_URL = 'https://gardens-relay.stereos.workers.dev';
+export const DEFAULT_RELAY_URL = 'https://relay.usegardens.com';
+export const PROFILE_SLUG_DOMAIN = 'usegardens.com';
 
 export async function uploadBlobToRelay(
   blobBytes: Uint8Array,
@@ -45,6 +48,8 @@ export async function getRelayZ32(relayBaseUrl: string): Promise<string | null> 
 
 const PROFILE_PIC_SERVICE  = 'gardens.profilePicUri';
 const LOCAL_USERNAME_SERVICE = 'gardens.localUsername';
+const SLUG_STORAGE_KEY = '@gardens/profile_slug';
+const SLUG_URL_STORAGE_KEY = '@gardens/profile_slug_url';
 
 interface ProfileState {
   myProfile: Profile | null;
@@ -52,6 +57,10 @@ interface ProfileState {
   profilePicUri: string | null;
   /** Locally persisted username — set at signup, used as fallback if myProfile is null. */
   localUsername: string | null;
+  /** Claimed profile slug for {slug}.usegardens.com links */
+  profileSlug: string | null;
+  /** Full URL for the profile slug */
+  profileSlugUrl: string | null;
 
   fetchMyProfile(): Promise<void>;
   fetchProfile(publicKey: string): Promise<Profile | null>;
@@ -60,6 +69,8 @@ interface ProfileState {
   loadProfilePicUri(): Promise<void>;
   setLocalUsername(name: string): Promise<void>;
   loadLocalUsername(): Promise<void>;
+  setProfileSlug(slug: string | null, url: string | null): Promise<void>;
+  loadProfileSlug(): Promise<void>;
 }
 
 export const useProfileStore = create<ProfileState>((set, get) => ({
@@ -67,10 +78,55 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   profileCache: {},
   profilePicUri: null,
   localUsername: null,
+  profileSlug: null,
+  profileSlugUrl: null,
 
   async fetchMyProfile() {
     const profile = await getMyProfile();
-    if (profile) set({ myProfile: profile });
+    if (profile) {
+      set(s => ({ myProfile: profile, profileCache: { ...s.profileCache, [profile.publicKey]: profile } }));
+      return;
+    }
+
+    const myKey = useAuthStore.getState().keypair?.publicKeyHex;
+    if (!myKey) return;
+
+    const dmProfile = await getDmProfile(myKey);
+    if (dmProfile?.username?.trim()) {
+      const restoredFromDm: Profile = {
+        publicKey: myKey,
+        username: dmProfile.username.trim(),
+        avatarBlobId: dmProfile.avatarBlobId ?? null,
+        bio: null,
+        availableFor: [],
+        isPublic: false,
+        createdAt: dmProfile.cachedAt,
+        updatedAt: dmProfile.cachedAt,
+      };
+      set(s => ({ myProfile: restoredFromDm, profileCache: { ...s.profileCache, [myKey]: restoredFromDm } }));
+      return;
+    }
+
+    // Last resort: restore from public pkarr profile if available.
+    try {
+      const pkarrUrl = getPkarrUrl(myKey);
+      const z32 = pkarrUrl.startsWith('pk:') ? pkarrUrl.slice(3) : pkarrUrl;
+      const resolved = await resolvePkarr(z32);
+      if (!resolved?.username?.trim()) return;
+      const restoredFromPkarr: Profile = {
+        publicKey: myKey,
+        username: resolved.username.trim(),
+        avatarBlobId: resolved.avatarBlobId ?? null,
+        bio: resolved.bio ?? null,
+        availableFor: [],
+        isPublic: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      set(s => ({ myProfile: restoredFromPkarr, profileCache: { ...s.profileCache, [myKey]: restoredFromPkarr } }));
+    } catch {
+      // no-op
+    }
   },
 
   async fetchProfile(publicKey: string) {
@@ -171,6 +227,31 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     try {
       const result = await Keychain.getGenericPassword({ service: LOCAL_USERNAME_SERVICE });
       if (result) set({ localUsername: result.password });
+    } catch {}
+  },
+
+  async setProfileSlug(slug: string | null, url: string | null) {
+    try {
+      if (slug && url) {
+        await AsyncStorage.setItem(SLUG_STORAGE_KEY, slug);
+        await AsyncStorage.setItem(SLUG_URL_STORAGE_KEY, url);
+      } else {
+        await AsyncStorage.removeItem(SLUG_STORAGE_KEY);
+        await AsyncStorage.removeItem(SLUG_URL_STORAGE_KEY);
+      }
+      set({ profileSlug: slug, profileSlugUrl: url });
+    } catch (err) {
+      console.warn('[profile] Failed to store slug:', err);
+    }
+  },
+
+  async loadProfileSlug() {
+    try {
+      const [slug, url] = await Promise.all([
+        AsyncStorage.getItem(SLUG_STORAGE_KEY),
+        AsyncStorage.getItem(SLUG_URL_STORAGE_KEY),
+      ]);
+      set({ profileSlug: slug, profileSlugUrl: url });
     } catch {}
   },
 }));

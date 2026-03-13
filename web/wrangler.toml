@@ -11,15 +11,21 @@ assets = { directory = "./public" }
 
 [vars]
 APP_SCHEME = "gardens"
-DEFAULT_RELAY_URL = "https://gardens-relay.stereos.workers.dev"
+DEFAULT_RELAY_URL = "https://relay.usegardens.com"
+PROFILE_SLUG_DOMAIN = "usegardens.com"
 
 [env.production.vars]
 APP_SCHEME = "gardens"
-DEFAULT_RELAY_URL = "https://gardens-relay.stereos.workers.dev"
+DEFAULT_RELAY_URL = "https://relay.usegardens.com"
+PROFILE_SLUG_DOMAIN = "usegardens.com"
 
 [[kv_namespaces]]
 binding = "PUBLIC_BLOBS"
 id = "60ab4a818c3e4f75a3902fe7a50eabf7"
+
+[[kv_namespaces]]
+binding = "PROFILE_INDEX_KV"
+id = "9b4dcdbceb5d46d2a2086518911a04c4"
 
 [observability]
 [observability.logs]

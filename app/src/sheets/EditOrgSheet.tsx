@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import ActionSheet, { SheetManager } from 'react-native-actions-sheet';
+import { validateDisplayName } from '../utils/validation';
 
 interface EditOrgSheetProps {
   sheetId: string;
@@ -34,8 +35,9 @@ export function EditOrgSheet(props: EditOrgSheetProps) {
   }, [currentName, currentDescription]);
 
   async function handleSave() {
-    if (!name.trim()) {
-      setError('Organization name is required');
+    const errorMsg = validateDisplayName(name);
+    if (errorMsg) {
+      setError(errorMsg);
       return;
     }
 
@@ -72,7 +74,7 @@ export function EditOrgSheet(props: EditOrgSheetProps) {
   }
 
   return (
-    <ActionSheet id={props.sheetId} containerStyle={styles.sheet}>
+    <ActionSheet id={props.sheetId} useBottomSafeAreaPadding containerStyle={styles.sheet}>
       <View style={styles.container}>
         <Text style={styles.title}>Edit Organization</Text>
 

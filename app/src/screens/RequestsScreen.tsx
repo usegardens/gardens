@@ -10,6 +10,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SheetManager } from 'react-native-actions-sheet';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useConversationsStore } from '../stores/useConversationsStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -31,6 +32,7 @@ function truncateKey(key: string): string {
 }
 
 export function RequestsScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const { requests, fetchConversations, deleteConversation } = useConversationsStore();
   const { profileCache, fetchProfile, myProfile } = useProfileStore();
   const { keypair } = useAuthStore();
@@ -72,6 +74,7 @@ export function RequestsScreen({ navigation }: Props) {
     <View style={styles.root}>
       <FlatList
         data={requests}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 32, flexGrow: requests.length === 0 ? 1 : 0 }}
         keyExtractor={(r) => r.threadId}
         renderItem={({ item }) => {
           const contactKey = item.initiatorKey === myKey ? item.recipientKey : item.initiatorKey;

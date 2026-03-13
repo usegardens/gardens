@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import type { OrgSummary } from '../ffi/gardensCore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getNative(): any {
@@ -17,6 +18,7 @@ function getNative(): any {
 }
 
 export function DiscoverOrgsScreen() {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<OrgSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,7 +79,7 @@ export function DiscoverOrgsScreen() {
       <FlatList
         data={results}
         keyExtractor={item => item.orgId}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 32 }]}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardBody}>

@@ -1,11 +1,25 @@
 package com.gardens
 
+import android.content.Intent
+import android.os.Bundle
+import androidx.core.view.WindowCompat
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 class MainActivity : ReactActivity() {
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    super.onCreate(savedInstanceState)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    // Ensure React Native Linking receives new intents in singleTask mode.
+    setIntent(intent)
+  }
 
   /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule

@@ -156,6 +156,7 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
   const [orgEmailEnabled, setOrgEmailEnabled] = useState(false);
   const [pkarrUrl, setPkarrUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { profileSlugUrl } = useProfileStore();
   const [loading, setLoading] = useState(true);
   const [memberCount, setMemberCount] = useState(0);
   const [welcomeDraft, setWelcomeDraft] = useState('');
@@ -712,17 +713,18 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
               if (!loco) return;
               await AsyncStorage.setItem(`${LOCATION_STORAGE_KEY}:org:${orgId}`, loco);
               setOrgLocation(loco);
-              const pubkey = org?.orgPubkey ?? org?.creatorKey;
+              const pubkey = org?.creatorKey;
               if (pubkey) publishProfileMeta(pubkey, { loco });
             }, 1000);
           }}
         />
-        {isPublic && pkarrUrl && org && (
+        {isPublic && org && pkarrUrl && (
           <View style={s.cardContainer}>
             <PublicIdentityCard
               pkarrUrl={pkarrUrl}
               publicKeyHex={org.orgPubkey || org.creatorKey}
-              label={orgName}
+              label="Organization Public Profile"
+              publicLinkOverride={profileSlugUrl || undefined}
             />
             <TouchableOpacity style={s.shareBtn} onPress={handleShareCommunity}>
               <Text style={s.shareBtnText}>🔗 Share Community Link</Text>
@@ -916,14 +918,30 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
           description="Manage banned users"
           onPress={handleNavigateToMembers}
         />
+        <SettingsRow
+          label="Audit Log"
+          description="View moderation history"
+          onPress={() => navigation.navigate('AuditLog', { orgId, orgName })}
+        />
       </Section>
 
       <Section title="Danger Zone">
         {isCreator ? (
-          <TouchableOpacity style={s.dangerRow} onPress={handleDeleteOrg}>
-            <Text style={s.dangerLabel}>Delete Organization</Text>
-            <Text style={s.chevron}>›</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity style={s.dangerRow} onPress={handleDeleteOrg}>
+              <Text style={s.dangerLabel}>Delete Organization</Text>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={s.row}
+              onPress={() => {
+                Alert.alert('Coming Soon', 'Manual member addition is disabled in this build.');
+              }}
+            >
+              <Text style={s.rowLabel}>Add Member Manually</Text>
+              <Text style={s.chevron}>›</Text>
+            </TouchableOpacity>
+          </>
         ) : (
           <TouchableOpacity style={s.dangerRow} onPress={handleLeaveOrg}>
             <Text style={s.dangerLabel}>Leave Organization</Text>

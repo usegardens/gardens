@@ -17,23 +17,27 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { SheetManager } from 'react-native-actions-sheet';
-import { Menu, Search, Calendar } from 'lucide-react-native';
+import { Menu, Search, Calendar, UserPlus } from 'lucide-react-native';
 import { useOrgsStore } from '../stores/useOrgsStore';
 import { useMessagesStore } from '../stores/useMessagesStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useOrgWelcomeStore } from '../stores/useOrgWelcomeStore';
+import { useOrgAdminThreadsStore } from '../stores/useOrgAdminThreadsStore';
 import { useSyncStore } from '../stores/useSyncStore';
 import { ChannelMessage } from '../components/ChannelMessage';
 import { MessageComposer } from '../components/MessageComposer';
 import { extractMentions } from '../components/MessageText';
 import { OrgSearchPanel } from '../components/OrgSearchPanel';
 import { OrgEventsPanel } from '../components/OrgEventsPanel';
+import { OrgAdminInboxPanel } from '../components/OrgAdminInboxPanel';
 import { DebugConnectionPanel } from '../components/DebugConnectionPanel';
-import { listOrgMembers, listIcedMembers } from '../ffi/gardensCore';
+import { listOrgMembers, listIcedMembers, isMuted, getMuteExpiration } from '../ffi/gardensCore';
+import { BUFFER_ROOM_NAME } from '../stores/useOrgsStore';
 import { BlobImage } from '../components/BlobImage';
 import { DefaultCoverShader } from '../components/DefaultCoverShader';
 import { parseCustomEmoji } from '../utils/customEmoji';
+import { sendReplyPushNotification } from '../services/pushNotifications';
 
 const DRAWER_WIDTH = 280;
 const EDGE_HIT_WIDTH = 20;
@@ -83,20 +87,24 @@ const bannerStyles = StyleSheet.create({
 type Props = NativeStackScreenProps<any, 'OrgChat'>;
 
 export function OrgChatScreen({ route, navigation }: Props) {
-  const { orgId, orgName } = route.params as { orgId: string; orgName: string };
+  const { orgId, orgName, initialRoomId } = route.params as { orgId: string; orgName: string; initialRoomId?: string };
 
   const { rooms, fetchRooms, createRoom, orgs } = useOrgsStore();
   const org = orgs.find(o => o.orgId === orgId);
   const { messages, reactions, fetchMessages, sendMessage, deleteMessage, toggleReaction } = useMessagesStore();
   const { myProfile, profileCache, fetchProfile, profilePicUri } = useProfileStore();
+  const { createOrgAdminThread } = useOrgAdminThreadsStore();
   const { dismissed, load: loadWelcome, setDismissed } = useOrgWelcomeStore();
   const { subscribe: syncSubscribe, unsubscribe: syncUnsubscribe, opTick } = useSyncStore();
 
   const [activeRoomId, setActiveRoomId]     = useState<string | null>(null);
   const [activeRoomName, setActiveRoomName] = useState('');
-  const [activePane, setActivePane]         = useState<'room' | 'events'>('room');
+  const [activePane, setActivePane]         = useState<'room' | 'events' | 'admin'>('room');
   const [memberCount, setMemberCount]       = useState(0);
   const [isAdmin, setIsAdmin]               = useState(false);
+  const [myAccessLevel, setMyAccessLevel]   = useState<string>('write'); // 'read' | 'write' | 'manage'
+  const [isUserMuted, setIsUserMuted]       = useState(false);
+  const [mutedUntil, setMutedUntil]         = useState<number>(0);
   const [loadingRooms, setLoadingRooms]     = useState(true);
   const [loadingMsgs, setLoadingMsgs]       = useState(false);
   const [mentionPrefill, setMentionPrefill] = useState<string | null>(null);
@@ -109,6 +117,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
   const [showWelcome, setShowWelcome]       = useState(false);
   const [icedMap, setIcedMap]               = useState<Record<string, number>>({});
   const [memberUsernames, setMemberUsernames] = useState<string[]>([]);
+  const currentUserKey = myProfile?.publicKey ?? useAuthStore.getState().keypair?.publicKeyHex;
 
   const flatListRef    = useRef<FlatList>(null);
   const activeRoomRef  = useRef<string | null>(null);
@@ -116,7 +125,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
   const drawerIsOpen  = useRef(false); // ref for PanResponder closures
   const isNearBottom  = useRef(true);
 
-  const orgRooms   = rooms[orgId] || [];
+  const orgRooms = useMemo(() => rooms[orgId] ?? [], [rooms, orgId]);
   const welcomeText = org?.welcomeText?.trim() ?? '';
   const isWelcomeDismissed = dismissed[orgId] ?? false;
   const customEmojiList = parseCustomEmoji(org?.customEmojiJson);
@@ -128,7 +137,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
     {},
   );
   const quickReactions = ['👍', '😂', '❤️', '🔥', '👏', ...customEmojiList.map(e => e.code)];
-  const messageList = activeRoomId ? (messages[activeRoomId] || []) : [];
+  const messageList = useMemo(() => (activeRoomId ? (messages[activeRoomId] ?? []) : []), [activeRoomId, messages]);
   const messageByIdRef = useRef<Map<string, typeof messageList[number]>>(new Map());
   useEffect(() => {
     messageByIdRef.current = new Map(messageList.map(m => [m.messageId, m]));
@@ -217,7 +226,9 @@ export function OrgChatScreen({ route, navigation }: Props) {
   useEffect(() => {
     const headerTitle = activePane === 'events'
       ? 'Events'
-      : (activeRoomName ? `#${activeRoomName}` : orgName);
+      : activePane === 'admin'
+        ? 'Admin Inbox'
+        : (activeRoomName ? `#${activeRoomName}` : orgName);
     navigation.setOptions({
       title: headerTitle,
       headerLeft: () => (
@@ -266,6 +277,29 @@ export function OrgChatScreen({ route, navigation }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opTick]);
 
+  // Re-fetch mute status when sync delivers new ops (e.g., when user is muted/unmuted)
+  useEffect(() => {
+    if (opTick > 0) {
+      const myKey = useProfileStore.getState().myProfile?.publicKey
+        ?? useAuthStore.getState().keypair?.publicKeyHex;
+      if (myKey && orgId) {
+        isMuted(orgId, myKey)
+          .then((muted) => {
+            setIsUserMuted(muted);
+            if (muted) {
+              return getMuteExpiration(orgId, myKey);
+            }
+            return 0;
+          })
+          .then((expiration) => {
+            setMutedUntil(expiration);
+          })
+          .catch(() => {});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opTick]);
+
   useFocusEffect(
     React.useCallback(() => {
       if (activeRoomId) {
@@ -284,30 +318,38 @@ export function OrgChatScreen({ route, navigation }: Props) {
         if (activeRoomId) syncUnsubscribe(activeRoomId);
         syncUnsubscribe(orgId);
       };
-    }, [activeRoomId, orgId]),
+    }, [activeRoomId, fetchMessages, orgId, syncSubscribe, syncUnsubscribe]),
   );
 
-  // Fetch profiles for any authors not yet in cache
+  // Fetch profiles for any authors not yet in cache.
+  // Also ensure the local user's own profile is in the cache so that own
+  // messages render their avatar correctly even before any remote fetch.
   useEffect(() => {
+    const myKey = myProfile?.publicKey ?? useAuthStore.getState().keypair?.publicKeyHex;
+    if (myKey && myProfile && !profileCache[myKey]) {
+      useProfileStore.setState(s => ({
+        profileCache: { ...s.profileCache, [myKey]: myProfile },
+      }));
+    }
     const keys = [...new Set(messageList.map(m => m.authorKey))];
     keys.forEach(key => {
       if (!profileCache[key]) fetchProfile(key);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messageList]);
+  }, [messageList, myProfile]);
 
   async function loadInitial() {
     setLoadingRooms(true);
     try {
       await fetchRooms(orgId);
       let fresh = useOrgsStore.getState().rooms[orgId] || [];
-      // Bootstrap a general channel if the native module didn't auto-create one
-      if (fresh.length === 0) {
-        await createRoom(orgId, 'general');
-        fresh = useOrgsStore.getState().rooms[orgId] || [];
-      }
       if (fresh.length > 0) {
-        const defaultRoom = fresh.find(r => r.name === 'general') ?? fresh[0];
+        // Honour an explicit room requested by the caller (e.g. Buffer Room
+        // after joining via invite), otherwise fall back to 'general' or [0].
+        const defaultRoom =
+          (initialRoomId ? fresh.find(r => r.roomId === initialRoomId) : null)
+          ?? fresh.find(r => r.name === 'general')
+          ?? fresh[0];
         await switchRoom(defaultRoom.roomId, defaultRoom.name);
       }
       try {
@@ -317,6 +359,24 @@ export function OrgChatScreen({ route, navigation }: Props) {
           ?? useAuthStore.getState().keypair?.publicKeyHex;
         const me = members.find(m => m.publicKey === myKey);
         setIsAdmin(me?.accessLevel === 'manage');
+        if (me?.accessLevel) {
+          setMyAccessLevel(me.accessLevel);
+        }
+        // Check if user is muted
+        try {
+          const myKey = useProfileStore.getState().myProfile?.publicKey
+            ?? useAuthStore.getState().keypair?.publicKeyHex;
+          if (myKey) {
+            const muted = await isMuted(orgId, myKey);
+            setIsUserMuted(muted);
+            if (muted) {
+              const expiration = await getMuteExpiration(orgId, myKey);
+              setMutedUntil(expiration);
+            }
+          }
+        } catch {
+          // Best effort - if check fails, assume not muted
+        }
         try {
           const iced = await listIcedMembers(orgId);
           const map: Record<string, number> = {};
@@ -368,11 +428,57 @@ export function OrgChatScreen({ route, navigation }: Props) {
     closeDrawer();
   }
 
+  function switchAdminInbox() {
+    setActivePane('admin');
+    closeDrawer();
+  }
+
+  async function openAdminMemberChat(adminPublicKey: string) {
+    try {
+      const threadId = await createOrgAdminThread(orgId, adminPublicKey);
+      setIsSearchOpen(false);
+      navigation.navigate('Conversation', {
+        threadId,
+        recipientKey: adminPublicKey,
+        orgId,
+        orgName,
+        conversationLabel: `${orgName} admins`,
+      });
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to open admin chat');
+    }
+  }
+
   // ── Send message ────────────────────────────────────────────────────────────
+
+  function maybeNotifyReply({
+    replyToId,
+    preview,
+    roomId,
+  }: {
+    replyToId: string | null;
+    preview: string;
+    roomId: string;
+  }) {
+    if (!replyToId) return;
+    const replied = messageByIdRef.current.get(replyToId);
+    if (!replied) return;
+    const myKey = myProfile?.publicKey ?? useAuthStore.getState().keypair?.publicKeyHex;
+    if (!replied.authorKey || replied.authorKey === myKey) return;
+    sendReplyPushNotification({
+      senderName: myProfile?.username ?? 'Someone',
+      recipientKey: replied.authorKey,
+      orgId,
+      roomId,
+      orgName,
+      preview,
+    }).catch(() => {});
+  }
 
   async function handleSend(text: string) {
     if (!activeRoomId) return;
     try {
+      const replyToId = replyingTo;
       await sendMessage({
         roomId: activeRoomId,
         contentType: 'text',
@@ -381,6 +487,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
         replyTo: replyingTo ?? undefined,
       });
       setReplyingTo(null);
+      maybeNotifyReply({ replyToId, roomId: activeRoomId, preview: text });
       await fetchMessages(activeRoomId, null);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
@@ -400,8 +507,14 @@ export function OrgChatScreen({ route, navigation }: Props) {
   async function handleSendBlob(blobId: string, _mimeType: string, contentType: 'image' | 'video') {
     if (!activeRoomId) return;
     try {
+      const replyToId = replyingTo;
       await sendMessage({ roomId: activeRoomId, contentType, blobId, replyTo: replyingTo ?? undefined });
       setReplyingTo(null);
+      maybeNotifyReply({
+        replyToId,
+        roomId: activeRoomId,
+        preview: contentType === 'video' ? 'Replied with a video' : 'Replied with an image',
+      });
       await fetchMessages(activeRoomId, null);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
@@ -421,8 +534,10 @@ export function OrgChatScreen({ route, navigation }: Props) {
   async function handleSendAudio(blobId: string) {
     if (!activeRoomId) return;
     try {
+      const replyToId = replyingTo;
       await sendMessage({ roomId: activeRoomId, contentType: 'audio', blobId, replyTo: replyingTo ?? undefined });
       setReplyingTo(null);
+      maybeNotifyReply({ replyToId, roomId: activeRoomId, preview: 'Replied with a voice message' });
       await fetchMessages(activeRoomId, null);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
@@ -442,8 +557,10 @@ export function OrgChatScreen({ route, navigation }: Props) {
   async function handleSendGif(embedUrl: string) {
     if (!activeRoomId) return;
     try {
+      const replyToId = replyingTo;
       await sendMessage({ roomId: activeRoomId, contentType: 'gif', embedUrl, replyTo: replyingTo ?? undefined });
       setReplyingTo(null);
+      maybeNotifyReply({ replyToId, roomId: activeRoomId, preview: 'Replied with a GIF' });
       await fetchMessages(activeRoomId, null);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
     } catch (err: any) {
@@ -502,6 +619,20 @@ export function OrgChatScreen({ route, navigation }: Props) {
       {/* Chat area */}
       {activePane === 'events' ? (
         <OrgEventsPanel orgId={orgId} orgName={orgName} rooms={orgRooms} />
+      ) : activePane === 'admin' ? (
+        <OrgAdminInboxPanel
+          orgId={orgId}
+          orgName={orgName}
+          adminContactKey={org?.orgPubkey ?? org?.creatorKey ?? null}
+          isAdmin={isAdmin}
+          onOpenConversation={(threadId, recipientKey, requestOrgId) => navigation.navigate('Conversation', {
+            threadId,
+            recipientKey,
+            orgId: requestOrgId,
+            orgName,
+            conversationLabel: `${orgName} admin inbox`,
+          })}
+        />
       ) : loadingMsgs ? (
         <View style={s.center}>
           <ActivityIndicator color="#fff" />
@@ -517,10 +648,12 @@ export function OrgChatScreen({ route, navigation }: Props) {
             renderItem={({ item, index }) => {
               const prev = index > 0 ? messageList[index - 1] : null;
               const isGrouped = prev?.authorKey === item.authorKey;
-              const profile = profileCache[item.authorKey];
+              const myPublicKey = myProfile?.publicKey ?? useAuthStore.getState().keypair?.publicKeyHex;
+              const isOwn = !!myPublicKey && item.authorKey === myPublicKey;
+              // For own messages prefer myProfile data; for others use the cache.
+              const profile = isOwn ? (myProfile ?? profileCache[item.authorKey]) : profileCache[item.authorKey];
               const authorUsername = profile?.username ?? item.authorKey.slice(0, 8);
-              const isOwn = item.authorKey === myProfile?.publicKey;
-              const authorAvatarBlobId = (isOwn ? myProfile?.avatarBlobId : profile?.avatarBlobId) ?? null;
+              const authorAvatarBlobId = profile?.avatarBlobId ?? null;
               const authorAvatarUri = isOwn ? profilePicUri : null;
               const replyToMsg = item.replyTo ? messageByIdRef.current.get(item.replyTo) : null;
               const replyProfile = replyToMsg ? profileCache[replyToMsg.authorKey] : null;
@@ -628,22 +761,45 @@ export function OrgChatScreen({ route, navigation }: Props) {
               </View>
             }
           />
-          <MessageComposer
-            roomId={activeRoomId}
-            onSend={handleSend}
-            onSendBlob={handleSendBlob}
-            onSendAudio={handleSendAudio}
-            onSendGif={handleSendGif}
-            placeholder={`Message #${activeRoomName}`}
-            mentionCandidates={mentionCandidates}
-            channelCandidates={channelCandidates}
-            prefillText={mentionPrefill}
-            onPrefillApplied={() => setMentionPrefill(null)}
-            replyingTo={replyingTo}
-            onCancelReply={() => setReplyingTo(null)}
-            customEmojiCodes={customEmojiList.map(e => e.code)}
-            customEmojis={customEmojis}
-          />
+          {/* Read-only guard:
+              - 'read' access + not in Buffer Room → show banner, hide composer
+              - 'read' access + in Buffer Room     → show composer (allowed)
+              - 'write' or 'manage' access         → always show composer */}
+          {myAccessLevel === 'read' && activeRoomName !== BUFFER_ROOM_NAME ? (
+            <TouchableOpacity
+              style={s.readOnlyBanner}
+              activeOpacity={0.75}
+              onPress={() => {
+                const bufferRoom = orgRooms.find(r => r.name === BUFFER_ROOM_NAME);
+                if (bufferRoom) {
+                  switchRoom(bufferRoom.roomId, bufferRoom.name);
+                }
+              }}
+            >
+              <Text style={s.readOnlyBannerText}>
+                This channel is read-only. Head to Buffer Room to chat.
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <MessageComposer
+              roomId={activeRoomId}
+              onSend={handleSend}
+              onSendBlob={handleSendBlob}
+              onSendAudio={handleSendAudio}
+              onSendGif={handleSendGif}
+              placeholder={`Message #${activeRoomName}`}
+              mentionCandidates={mentionCandidates}
+              channelCandidates={channelCandidates}
+              prefillText={mentionPrefill}
+              onPrefillApplied={() => setMentionPrefill(null)}
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+              customEmojiCodes={customEmojiList.map(e => e.code)}
+              customEmojis={customEmojis}
+              isMuted={isUserMuted}
+              mutedUntil={mutedUntil}
+            />
+          )}
         </>
       ) : (
         <View style={s.center}>
@@ -678,12 +834,20 @@ export function OrgChatScreen({ route, navigation }: Props) {
             <View style={s.orgInfoRow}>
               <Text style={s.orgName}>{orgName}</Text>
               {isAdmin && (
-                <TouchableOpacity
-                  style={s.settingsBtn}
-                  onPress={() => { closeDrawer(); navigation.navigate('OrgSettings', { orgId, orgName }); }}
-                >
-                  <Text style={s.settingsBtnText}>⚙</Text>
-                </TouchableOpacity>
+                <View style={s.orgActions}>
+                  <TouchableOpacity
+                    style={s.inviteBtn}
+                    onPress={() => { closeDrawer(); navigation.navigate('OrgInvite', { orgId, orgName }); }}
+                  >
+                    <UserPlus size={16} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={s.settingsBtn}
+                    onPress={() => { closeDrawer(); navigation.navigate('OrgSettings', { orgId, orgName }); }}
+                  >
+                    <Text style={s.settingsBtnText}>⚙</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
             {memberCount > 0 && (
@@ -750,6 +914,19 @@ export function OrgChatScreen({ route, navigation }: Props) {
                   </Text>
                 </View>
               </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity
+                  style={[s.channelRow, activePane === 'admin' && s.channelRowActive]}
+                  onPress={switchAdminInbox}
+                >
+                  <View style={s.channelRowContent}>
+                    <UserPlus size={16} color={activePane === 'admin' ? '#fff' : '#777'} />
+                    <Text style={[s.channelText, activePane === 'admin' && s.channelTextActive]}>
+                      Admin Inbox
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
 
               <Text style={s.sectionLabel}>CHANNELS</Text>
 
@@ -857,8 +1034,9 @@ export function OrgChatScreen({ route, navigation }: Props) {
         orgId={orgId}
         rooms={orgRooms}
         activeRoomName={activeRoomName}
+        currentUserKey={currentUserKey}
+        onOpenAdminChat={openAdminMemberChat}
         onClose={() => setIsSearchOpen(false)}
-        onNavigateInvite={() => navigation.navigate('Invite', { orgId, orgName })}
       />
     </View>
   );
@@ -874,6 +1052,21 @@ const s = StyleSheet.create({
   emptyMessages:{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
   emptyText:    { color: '#555', fontSize: 14 },
 
+  // Read-only banner (shown instead of MessageComposer for read-access members)
+  readOnlyBanner: {
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a2a',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  readOnlyBannerText: {
+    color: '#888',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+
   headerBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' },
 
   // Edge swipe zone
@@ -887,6 +1080,8 @@ const s = StyleSheet.create({
   orgInfo:      { paddingHorizontal: 16, paddingVertical: 12 },
   orgInfoRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   orgName:      { color: '#fff', fontSize: 17, fontWeight: '700', flex: 1 },
+  orgActions:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8 },
+  inviteBtn:    { width: 30, height: 30, borderRadius: 15, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center' },
   memberCount:  { color: '#666', fontSize: 12, marginTop: 2 },
   settingsBtn:  { width: 30, height: 30, borderRadius: 15, backgroundColor: '#1e1e1e', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   settingsBtnText: { color: '#888', fontSize: 16 },

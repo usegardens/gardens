@@ -34,6 +34,7 @@ export interface Env {
   FCM_CLIENT_EMAIL: string;
   FCM_PRIVATE_KEY: string;
   EMAIL: { send(msg: unknown): Promise<void> };
+  PROFILE_SLUG_DOMAIN?: string;
 }
 
 // ── FCM v1 push helper ────────────────────────────────────────────────────────
@@ -117,6 +118,24 @@ async function sendPushNotification(
 
 const RELAY_DOMAIN = 'gardens-relay.stereos.workers.dev';
 const INBOX_SUFFIX = new TextEncoder().encode('gardens:inbox:v1');
+const SIGNED_PAYLOAD_MAX_AGE_MS = 5 * 60 * 1000;
+const SIGNED_PAYLOAD_MAX_FUTURE_MS = 30 * 1000;
+const SLUG_PATTERN = /^@?[a-z0-9\p{Emoji}](?:[a-z0-9\p{Emoji}-]{0,61}[a-z0-9\p{Emoji}])?$/u;
+
+interface SignedEnvelope {
+  signed_payload: string;
+  signature: string;
+}
+
+interface VerifiedEnvelope {
+  payload: OutboundEmailPayload;
+  publicKeyHex: string;
+}
+
+interface ProfileMetaPatch {
+  loco?: string;
+  interests?: string[];
+}
 
 function deriveInboxTopic(z32Key: string): string {
   const pubkey = z32.decode(z32Key);
@@ -124,6 +143,128 @@ function deriveInboxTopic(z32Key: string): string {
   input.set(pubkey);
   input.set(INBOX_SUFFIX, pubkey.length);
   return bytesToHex(blake3(input));
+}
+
+function parseSignedEnvelope(input: unknown): SignedEnvelope | null {
+  if (!input || typeof input !== 'object') return null;
+  const body = input as Record<string, unknown>;
+  if (typeof body.signed_payload !== 'string' || typeof body.signature !== 'string') {
+    return null;
+  }
+  return { signed_payload: body.signed_payload, signature: body.signature };
+}
+
+async function readJson(request: Request): Promise<unknown | null> {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+function verifySignedEnvelope(envelope: SignedEnvelope): VerifiedEnvelope | null {
+  try {
+    const payload = JSON.parse(envelope.signed_payload) as OutboundEmailPayload;
+    if (!payload || typeof payload !== 'object') return null;
+    if (
+      typeof payload.from_z32 !== 'string' ||
+      typeof payload.to !== 'string' ||
+      typeof payload.subject !== 'string' ||
+      typeof payload.body_text !== 'string' ||
+      typeof payload.timestamp !== 'number'
+    ) {
+      return null;
+    }
+
+    const pubkeyBytes = z32.decode(payload.from_z32);
+    if (!(pubkeyBytes instanceof Uint8Array) || pubkeyBytes.length !== 32) {
+      return null;
+    }
+
+    const sigBytes = Uint8Array.from(atob(envelope.signature), c => c.charCodeAt(0));
+    const msgBytes = new TextEncoder().encode(envelope.signed_payload);
+    const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
+    if (!valid) return null;
+
+    return {
+      payload,
+      publicKeyHex: bytesToHex(pubkeyBytes).toLowerCase(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isFreshTimestamp(timestampMs: number): boolean {
+  const skew = Date.now() - timestampMs;
+  return skew <= SIGNED_PAYLOAD_MAX_AGE_MS && skew >= -SIGNED_PAYLOAD_MAX_FUTURE_MS;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extractLocalPart(email: string): string | null {
+  const at = email.indexOf('@');
+  if (at <= 0) return null;
+  return email.slice(0, at).toLowerCase();
+}
+
+export function normalizeSlug(input: string): string {
+  if (!input) return '';
+  // 1) Ensure proper decomposition to catch spoofed visually similar emojis/characters
+  let normalized = input.normalize('NFKD').toLowerCase().trim();
+  
+  // 2) Preserve an optional leading '@' and allow alphanumeric/dash/emojis
+  const hasAt = normalized.startsWith('@');
+  normalized = normalized.replace(/[^\w\-\p{Emoji}]/gu, '');
+  
+  // 3) Strip out underscores
+  normalized = normalized.replace(/_/g, '');
+  
+  // 4) Prevent repeated dashes
+  normalized = normalized.replace(/-+/g, '-');
+  
+  // 5) Remove leading/trailing dashes safely without clipping single-char emojis
+  normalized = normalized.replace(/^-+|-+$/g, '');
+
+  if (hasAt && !normalized.startsWith('@')) {
+    normalized = '@' + normalized;
+  }
+
+  return (normalized || '').slice(0, 63);
+}
+
+function sanitizeProfileMeta(input: unknown): ProfileMetaPatch | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  const out: ProfileMetaPatch = {};
+
+  if (typeof raw.loco === 'string') {
+    const loco = raw.loco.trim();
+    if (loco) out.loco = loco.slice(0, 120);
+  }
+
+  if (Array.isArray(raw.interests)) {
+    const interests = raw.interests
+      .filter((v): v is string => typeof v === 'string')
+      .map(v => v.trim())
+      .filter(Boolean)
+      .slice(0, 40)
+      .map(v => v.slice(0, 40));
+    out.interests = interests;
+  }
+
+  if (Object.keys(out).length === 0) return null;
+  return out;
 }
 
 interface EmailOp {
@@ -277,30 +418,16 @@ export default {
 
     // ── POST /send-email — authenticated outbound email ────────────────────────
     if (request.method === 'POST' && url.pathname === '/send-email') {
-      const body = await request.json() as { signed_payload: string; signature: string };
-      const { signed_payload, signature } = body;
+      const json = await readJson(request);
+      const envelope = parseSignedEnvelope(json);
+      if (!envelope) return new Response('invalid payload', { status: 400 });
 
-      let payload: OutboundEmailPayload;
-      try {
-        payload = JSON.parse(signed_payload) as OutboundEmailPayload;
-      } catch {
-        return new Response('invalid payload', { status: 400 });
-      }
+      const verified = verifySignedEnvelope(envelope);
+      if (!verified) return new Response('signature verification failed', { status: 403 });
+      const { payload } = verified;
 
-      // Freshness check — reject payloads older than 5 minutes
-      if (Date.now() - payload.timestamp > 5 * 60 * 1000) {
+      if (!isFreshTimestamp(payload.timestamp)) {
         return new Response('payload expired', { status: 400 });
-      }
-
-      // Verify Ed25519 signature
-      try {
-        const pubkeyBytes = z32.decode(payload.from_z32);
-        const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
-        const msgBytes = new TextEncoder().encode(signed_payload);
-        const valid = ed25519.verify(sigBytes, msgBytes, pubkeyBytes);
-        if (!valid) return new Response('invalid signature', { status: 403 });
-      } catch {
-        return new Response('signature verification failed', { status: 403 });
       }
 
       // Rate limit: 50 emails/hour per from_z32
@@ -325,26 +452,155 @@ export default {
       return new Response(null, { status: 200 });
     }
 
-    // ── POST /profile-meta/set — store discoverable profile metadata ───────────
+    // ── POST /profile-meta/set — signed discoverable profile metadata write ───
     if (request.method === 'POST' && url.pathname === '/profile-meta/set') {
-      const { publicKey, meta } = await request.json() as {
-        publicKey: string;
-        meta: { loco?: string; interests?: string[] };
-      };
-      if (!publicKey) return new Response('missing publicKey', { status: 400 });
-      const existing = await env.PUSH_TOKENS.get(`meta:${publicKey}`);
-      const current = existing ? JSON.parse(existing) : {};
-      const updated = { ...current, ...meta };
-      await env.PUSH_TOKENS.put(`meta:${publicKey}`, JSON.stringify(updated), {
+      const json = await readJson(request);
+      const envelope = parseSignedEnvelope(json);
+      if (!envelope) return new Response('invalid payload', { status: 400 });
+
+      const verified = verifySignedEnvelope(envelope);
+      if (!verified) return new Response('signature verification failed', { status: 403 });
+      const { payload, publicKeyHex } = verified;
+
+      if (!isFreshTimestamp(payload.timestamp)) {
+        return new Response('payload expired', { status: 400 });
+      }
+      if (extractLocalPart(payload.to) !== 'profile-meta' || payload.subject !== 'profile-meta:set') {
+        return new Response('invalid control envelope', { status: 400 });
+      }
+
+      const cmd = parseJsonObject(payload.body_text);
+      if (!cmd || cmd.op !== 'profile_meta_set') {
+        return new Response('invalid command', { status: 400 });
+      }
+
+      const requestedKey = typeof cmd.publicKey === 'string' ? cmd.publicKey.toLowerCase() : publicKeyHex;
+      if (!/^[0-9a-f]{64}$/.test(requestedKey)) {
+        return new Response('invalid public key', { status: 400 });
+      }
+      if (requestedKey !== publicKeyHex) {
+        return new Response('public key mismatch', { status: 403 });
+      }
+
+      const patch = sanitizeProfileMeta(cmd.meta);
+      if (!patch) {
+        return new Response('invalid metadata', { status: 400 });
+      }
+
+      const existing = await env.PUSH_TOKENS.get(`meta:${requestedKey}`);
+      const current = existing ? parseJsonObject(existing) ?? {} : {};
+      const updated = { ...current, ...patch, updatedAt: Date.now() };
+      await env.PUSH_TOKENS.put(`meta:${requestedKey}`, JSON.stringify(updated), {
         expirationTtl: 60 * 60 * 24 * 365,
       });
-      return new Response(null, { status: 204 });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── POST /slug/claim — signed slug claim for {slug}.<domain> links ────────
+    if (request.method === 'POST' && url.pathname === '/slug/claim') {
+      const json = await readJson(request);
+      const envelope = parseSignedEnvelope(json);
+      if (!envelope) return new Response('invalid payload', { status: 400 });
+
+      const verified = verifySignedEnvelope(envelope);
+      if (!verified) return new Response('signature verification failed', { status: 403 });
+      const { payload, publicKeyHex } = verified;
+
+      if (!isFreshTimestamp(payload.timestamp)) {
+        return new Response('payload expired', { status: 400 });
+      }
+      if (extractLocalPart(payload.to) !== 'slug' || payload.subject !== 'slug:claim') {
+        return new Response('invalid control envelope', { status: 400 });
+      }
+
+      const cmd = parseJsonObject(payload.body_text);
+      if (!cmd || cmd.op !== 'slug_claim') {
+        return new Response('invalid command', { status: 400 });
+      }
+
+      const requestedKey = typeof cmd.publicKey === 'string' ? cmd.publicKey.toLowerCase() : publicKeyHex;
+      if (!/^[0-9a-f]{64}$/.test(requestedKey)) {
+        return new Response('invalid public key', { status: 400 });
+      }
+      if (requestedKey !== publicKeyHex) {
+        return new Response('public key mismatch', { status: 403 });
+      }
+
+      const slugSource =
+        (typeof cmd.slug === 'string' && cmd.slug.trim()) ||
+        (typeof cmd.displayName === 'string' && cmd.displayName.trim()) ||
+        '';
+      const slug = normalizeSlug(slugSource);
+      if (!SLUG_PATTERN.test(slug)) {
+        return new Response('invalid slug', { status: 400 });
+      }
+
+      const slugKey = `slug:${slug}`;
+      const profileSlugKey = `profile_slug:${requestedKey}`;
+      const existingSlugClaim = await env.PUSH_TOKENS.get(slugKey);
+      if (existingSlugClaim) {
+        const parsed = parseJsonObject(existingSlugClaim);
+        const owner = typeof parsed?.publicKey === 'string' ? parsed.publicKey.toLowerCase() : null;
+        if (owner && owner !== requestedKey) {
+          return new Response('slug already claimed', { status: 409 });
+        }
+      }
+
+      const previousSlug = await env.PUSH_TOKENS.get(profileSlugKey);
+      if (previousSlug && previousSlug !== slug) {
+        const prevSlugKey = `slug:${previousSlug}`;
+        const prevRaw = await env.PUSH_TOKENS.get(prevSlugKey);
+        const prevParsed = prevRaw ? parseJsonObject(prevRaw) : null;
+        const prevOwner = typeof prevParsed?.publicKey === 'string' ? prevParsed.publicKey.toLowerCase() : null;
+        if (prevOwner === requestedKey) {
+          await env.PUSH_TOKENS.delete(prevSlugKey);
+        }
+      }
+
+      const now = Date.now();
+      const existingParsed = existingSlugClaim ? parseJsonObject(existingSlugClaim) : null;
+      const claimedAt = typeof existingParsed?.claimedAt === 'number' ? existingParsed.claimedAt : now;
+      await env.PUSH_TOKENS.put(slugKey, JSON.stringify({
+        slug,
+        publicKey: requestedKey,
+        z32Key: payload.from_z32,
+        claimedAt,
+        updatedAt: now,
+      }));
+      await env.PUSH_TOKENS.put(profileSlugKey, slug);
+
+      const rootDomain = (env.PROFILE_SLUG_DOMAIN ?? 'usegardens.com').toLowerCase();
+      const linkUrl = `https://gateway.${rootDomain}/u/${slug}`;
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          slug: slug,
+          url: linkUrl,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
+    // ── GET /slug/:slug — resolve claimed slug to key metadata ─────────────────
+    if (request.method === 'GET' && url.pathname.startsWith('/slug/')) {
+      const requested = url.pathname.slice('/slug/'.length);
+      const slug = normalizeSlug(requested);
+      if (!SLUG_PATTERN.test(slug)) return new Response('invalid slug', { status: 400 });
+      const raw = await env.PUSH_TOKENS.get(`slug:${slug}`);
+      if (!raw) return new Response('not found', { status: 404 });
+      return new Response(raw, { headers: { 'Content-Type': 'application/json' } });
     }
 
     // ── GET /profile-meta/:publicKey — fetch discoverable profile metadata ─────
     if (request.method === 'GET' && url.pathname.startsWith('/profile-meta/')) {
-      const publicKey = url.pathname.slice('/profile-meta/'.length);
+      const publicKey = url.pathname.slice('/profile-meta/'.length).toLowerCase();
       if (!publicKey) return new Response('missing key', { status: 400 });
+      if (!/^[0-9a-f]{64}$/.test(publicKey)) return new Response('invalid key', { status: 400 });
       const data = await env.PUSH_TOKENS.get(`meta:${publicKey}`);
       if (!data) return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
       return new Response(data, { headers: { 'Content-Type': 'application/json' } });

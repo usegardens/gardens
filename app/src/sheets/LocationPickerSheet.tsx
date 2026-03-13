@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import { DEFAULT_RELAY_URL } from '../stores/useProfileStore';
+import { prepareOutboundEmail } from '../ffi/gardensCore';
 
 export const LOCATION_STORAGE_KEY = '@gardens/location';
 
@@ -22,15 +23,77 @@ type Step = 'country' | 'state' | 'city';
 
 interface Place { id: number; name: string; }
 
+function relayControlAddress(localPart: string): string {
+  try {
+    const host = new URL(DEFAULT_RELAY_URL).host;
+    return `${localPart}@${host}`;
+  } catch {
+    return `${localPart}@relay.usegardens.com`;
+  }
+}
+
+async function postSignedRelayControl(
+  localPart: string,
+  subject: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const { signedPayload, signature } = await prepareOutboundEmail({
+    to: relayControlAddress(localPart),
+    subject,
+    bodyText: JSON.stringify(body),
+  });
+
+  return fetch(`${DEFAULT_RELAY_URL}/${localPart === 'slug' ? 'slug/claim' : 'profile-meta/set'}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signed_payload: signedPayload, signature }),
+  });
+}
+
 export async function publishProfileMeta(
   publicKey: string,
   patch: { loco?: string; interests?: string[] },
 ): Promise<void> {
-  await fetch(`${DEFAULT_RELAY_URL}/profile-meta/set`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ publicKey, meta: patch }),
-  }).catch(() => {});
+  try {
+    const resp = await postSignedRelayControl('profile-meta', 'profile-meta:set', {
+      op: 'profile_meta_set',
+      publicKey,
+      meta: patch,
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`profile meta update failed: ${resp.status} ${text}`);
+    }
+  } catch (err) {
+    console.warn('[profile-meta] failed to publish:', err);
+  }
+}
+
+export async function claimProfileSlug(
+  publicKeyHex: string,
+  displayName: string
+): Promise<{ slug: string; url: string } | null> {
+  const slugToClaim = displayName.startsWith('@') ? displayName : `@${displayName}`;
+  const resp = await postSignedRelayControl('slug', 'slug:claim', {
+    op: 'slug_claim',
+    slug: slugToClaim,
+    publicKey: publicKeyHex, // Assuming publicKeyHex should be part of the body
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`slug claim failed: ${resp.status} ${text}`);
+  }
+  try {
+    const parsed = await resp.json() as { slug?: string; url?: string };
+    if (typeof parsed.slug === 'string' && typeof parsed.url === 'string') {
+      // Store in profile store for display
+      await useProfileStore.getState().setProfileSlug(parsed.slug, parsed.url);
+      return { slug: parsed.slug, url: parsed.url };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function LocationPickerSheet(props: SheetProps<'location-picker-sheet'>) {
@@ -72,7 +135,7 @@ export function LocationPickerSheet(props: SheetProps<'location-picker-sheet'>) 
     GetCity(selectedCountry.id, selectedState.id).then((list: any[]) =>
       setCities(list.map(c => ({ id: c.id, name: c.name }))),
     );
-  }, [selectedState]);
+  }, [selectedCountry, selectedState]);
 
   function reset() {
     setStep('country');

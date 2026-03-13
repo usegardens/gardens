@@ -747,7 +747,6 @@ pub fn create_org(
                 let relay_z32_for_publish = sync_config::get_relay_z32();
                 if let Err(e) = pkarr_publish::publish_org_with_key(
                     &org_pk_hex,
-                    &org_id,
                     &name,
                     description.as_deref(),
                     None,
@@ -1141,7 +1140,6 @@ pub fn update_org(
                 let relay_z32_for_publish = sync_config::get_relay_z32();
                 if let Err(e) = pkarr_publish::publish_org_with_key(
                     &pk_hex,
-                    &org_id,
                     org_name,
                     org_desc,
                     avatar_blob_id.as_deref(),
@@ -1251,55 +1249,31 @@ pub fn delete_org(org_id: String) -> Result<(), CoreError> {
 
 /// Kick a member from the organization (removes immediately).
 /// Requires Manage-level permission.
-pub fn kick_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
-    // Delegates to remove_member_from_org which already checks permissions
-    remove_member_from_org(org_id, member_public_key)
+pub fn kick_member(org_id: String, member_public_key: String) -> Result<SendResult, AuthError> {
+    remove_member_from_org(org_id.clone(), member_public_key)?;
+    Ok(SendResult { id: org_id, op_bytes: vec![] })
 }
 
-/// Ban a member from the organization (prevents re-joining).
-/// Requires Manage-level permission.
-pub fn ban_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+pub fn ban_member(org_id: String, member_public_key: String) -> Result<SendResult, AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
-        
-        // Check if user has Manage permission
         let state = get_org_membership_state(&org_id).await?;
-        
         if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
             return Err(AuthError::Unauthorized("only Manage-level members can ban".into()));
         }
-
-        // Add to ban list
         let banned_at = now_micros();
-        db::ban_member(
-            &core.read_pool,
-            &org_id,
-            &member_public_key,
-            &core.public_key_hex,
-            banned_at,
-            None, // reason
-        )
-        .await
-        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        // Rotate encryption epoch for all org rooms so the banned user's
-        // key material cannot decrypt future messages.
-        db::bump_room_epochs_for_org(&core.read_pool, &org_id)
-            .await
+        db::ban_member(&core.read_pool, &org_id, &member_public_key, &core.public_key_hex, banned_at, None).await
             .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        // Also remove from memberships if present
+        db::bump_room_epochs_for_org(&core.read_pool, &org_id).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
         let _ = remove_member_from_org(org_id.clone(), member_public_key.clone());
-
-        log::info!("[ban] Member {} banned from org {}", member_public_key, org_id);
-        
-        Ok(())
+        Ok(SendResult { id: org_id, op_bytes: vec![] })
     })
 }
 
 /// Unban a previously banned member.
 /// Requires Manage-level permission.
-pub fn unban_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+pub fn unban_member(org_id: String, member_public_key: String) -> Result<SendResult, AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
         
@@ -1310,14 +1284,9 @@ pub fn unban_member(org_id: String, member_public_key: String) -> Result<(), Aut
             return Err(AuthError::Unauthorized("only Manage-level members can unban".into()));
         }
 
-        // Remove from ban list
-        db::unban_member(&core.read_pool, &org_id, &member_public_key)
-            .await
+        db::unban_member(&core.read_pool, &org_id, &member_public_key).await
             .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        log::info!("[ban] Member {} unbanned from org {}", member_public_key, org_id);
-        
-        Ok(())
+        Ok(SendResult { id: org_id, op_bytes: vec![] })
     })
 }
 
@@ -1357,65 +1326,33 @@ pub fn mute_member(
     org_id: String,
     member_public_key: String,
     duration_seconds: i64,
-) -> Result<(), AuthError> {
+) -> Result<SendResult, AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
-        
-        // Check if user has Manage permission
         let state = get_org_membership_state(&org_id).await?;
-        
         if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
             return Err(AuthError::Unauthorized("only Manage-level members can mute".into()));
         }
-
-        // Store mute info with expiration
         let muted_at = now_micros();
         let expires_at = muted_at + (duration_seconds * 1_000_000);
-        
-        db::mute_member(
-            &core.read_pool,
-            &org_id,
-            &member_public_key,
-            &core.public_key_hex,
-            muted_at,
-            expires_at,
-            None, // reason
-        )
-        .await
-        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        log::info!(
-            "[mute] Member {} muted in org {} until {}",
-            member_public_key,
-            org_id,
-            expires_at
-        );
-        
-        Ok(())
+        db::mute_member(&core.read_pool, &org_id, &member_public_key, &core.public_key_hex, muted_at, expires_at, None).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        Ok(SendResult { id: org_id, op_bytes: vec![] })
     })
 }
 
 /// Unmute a previously muted member.
 /// Requires Manage-level permission.
-pub fn unmute_member(org_id: String, member_public_key: String) -> Result<(), AuthError> {
+pub fn unmute_member(org_id: String, member_public_key: String) -> Result<SendResult, AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
-        
-        // Check if user has Manage permission
         let state = get_org_membership_state(&org_id).await?;
-        
         if !state.has_permission(&core.private_key.public_key(), auth::AccessLevel::Manage) {
             return Err(AuthError::Unauthorized("only Manage-level members can unmute".into()));
         }
-
-        // Remove from mute list
-        db::unmute_member(&core.read_pool, &org_id, &member_public_key)
-            .await
+        db::unmute_member(&core.read_pool, &org_id, &member_public_key).await
             .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        log::info!("[mute] Member {} unmuted in org {}", member_public_key, org_id);
-        
-        Ok(())
+        Ok(SendResult { id: org_id, op_bytes: vec![] })
     })
 }
 
@@ -2356,6 +2293,30 @@ pub fn list_dm_threads() -> Vec<DmThread> {
     })
 }
 
+// ─── Org Admin Threads (Stubs) ────────────────────────────────────────────────
+
+pub struct OrgAdminThread {
+    pub thread_id: String,
+    pub org_id: String,
+    pub initiator_key: String,
+    pub participant_key: String,
+    pub admin_key: String,
+    pub created_at: i64,
+    pub last_message_at: Option<i64>,
+    pub is_request: bool,
+}
+
+pub fn create_org_admin_thread(_org_id: String, _admin_key: String) -> Result<SendResult, CoreError> {
+    Err(CoreError::DbError("Not implemented".into()))
+}
+
+pub fn list_org_admin_threads(_org_id: String) -> Vec<OrgAdminThread> { vec![] }
+pub fn list_my_org_admin_threads() -> Vec<OrgAdminThread> { vec![] }
+
+pub fn join_public_org(_org_id: String, _org_pubkey_z32: String, _join_sig_b64: String) -> Result<SendResult, AuthError> {
+    Err(AuthError::Unauthorized("Not implemented".into()))
+}
+
 pub fn accept_message_request(thread_id: String) -> Result<(), AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
@@ -2436,6 +2397,7 @@ pub fn leave_org(org_id: String) -> Result<SendResult, CoreError> {
                     op_type: "remove_member".into(),
                     org_id: org_id.clone(),
                     member_key: core.public_key_hex.clone(),
+                    moderator_key: core.public_key_hex.clone(),
                     access_level: None,
                     cooldown_secs: None,
                     iced_until: None,
@@ -2667,6 +2629,56 @@ pub fn verify_invite_token(
     })
 }
 
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+/// Audit log entry for moderation actions
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub org_id: String,
+    pub moderator_key: String,
+    pub target_key: String,
+    pub action_type: String,
+    pub details: Option<String>,
+    pub created_at: i64,
+}
+
+/// Check if a member is currently muted
+pub fn is_muted(org_id: String, member_key: String) -> bool {
+    store::block_on(async move {
+        let Some(core) = store::get_core() else { return false };
+        let now = now_micros();
+        db::is_muted(&core.read_pool, &org_id, &member_key, now).await.unwrap_or(false)
+    })
+}
+
+/// Get mute expiration time
+pub fn get_mute_expiration(org_id: String, member_key: String) -> i64 {
+    store::block_on(async move {
+        let Some(core) = store::get_core() else { return 0 };
+        let row = sqlx::query_scalar::<_, i64>(
+            "SELECT expires_at FROM org_mutes WHERE org_id = ? AND member_key = ? AND expires_at > ?"
+        )
+        .bind(&org_id).bind(&member_key).bind(now_micros())
+        .fetch_optional(&core.read_pool).await;
+        row.unwrap_or(None).unwrap_or(0)
+    })
+}
+
+/// List audit log entries
+pub fn list_audit_log(org_id: String, limit: u32) -> Vec<AuditLogEntry> {
+    store::block_on(async move {
+        let Some(core) = store::get_core() else { return vec![] };
+        match db::list_audit_log(&core.read_pool, &org_id, limit as i64).await {
+            Ok(entries) => entries.into_iter().map(|e| AuditLogEntry {
+                id: e.id, org_id: e.org_id, moderator_key: e.moderator_key,
+                target_key: e.target_key, action_type: e.action_type,
+                details: e.details, created_at: e.created_at,
+            }).collect(),
+            Err(_) => vec![],
+        }
+    })
+}
+
 /// Add a member directly to an organization (NFC path).
 /// Requires Manage-level permission.
 pub fn add_member_direct(
@@ -2715,6 +2727,7 @@ pub fn add_member_direct(
             op_type: "add_member".into(),
             org_id: org_id.clone(),
             member_key: member_public_key.clone(),
+            moderator_key: core.public_key_hex.clone(),
             access_level: Some(level.as_str().to_string()),
             cooldown_secs: None,
             iced_until: None,
@@ -2775,6 +2788,7 @@ pub fn claim_invite_token(token_base64: String) -> Result<SendResult, AuthError>
             op_type: "add_member".into(),
             org_id: org_id.clone(),
             member_key: my_key_hex.clone(),
+            moderator_key: my_key_hex.clone(),
             access_level: Some(access_level.as_str().to_string()),
             cooldown_secs: None,
             iced_until: None,
@@ -2818,58 +2832,36 @@ pub fn claim_invite_token(token_base64: String) -> Result<SendResult, AuthError>
 pub fn remove_member_from_org(
     org_id: String,
     member_public_key: String,
-) -> Result<(), AuthError> {
+) -> Result<SendResult, AuthError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(AuthError::NotInitialised)?;
-
         let member_key_bytes = hex::decode(&member_public_key)
             .map_err(|_| AuthError::Unauthorized("invalid public key".into()))?;
         let member_key_array: [u8; 32] = member_key_bytes.as_slice().try_into()
             .map_err(|_| AuthError::Unauthorized("invalid public key length".into()))?;
         let member_key = p2panda_core::PublicKey::from_bytes(&member_key_array)
             .map_err(|_| AuthError::Unauthorized("invalid public key".into()))?;
-
         let mut state = get_org_membership_state(&org_id).await?;
-
-        let _op_hash = auth::remove_member(
-            &mut state,
-            &core.private_key.public_key(),
-            &member_key,
-        ).await?;
-
+        let _op_hash = auth::remove_member(&mut state, &core.private_key.public_key(), &member_key).await?;
         let query = "DELETE FROM memberships WHERE org_id = ? AND member_key = ?";
-        sqlx::query(query)
-            .bind(&org_id)
-            .bind(&member_public_key)
-            .execute(&core.read_pool)
-            .await
+        sqlx::query(query).bind(&org_id).bind(&member_public_key).execute(&core.read_pool).await
             .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
         let membership_op = ops::MembershipOp {
             op_type: "remove_member".into(),
             org_id: org_id.clone(),
             member_key: member_public_key,
+            moderator_key: core.public_key_hex.clone(),
             access_level: None,
             cooldown_secs: None,
             iced_until: None,
         };
-
         let payload = ops::encode_cbor(&membership_op)
             .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
         let mut store_guard = core.op_store.lock().await;
-        ops::sign_and_store_op(
-            &mut *store_guard,
-            &core.private_key,
-            ops::log_ids::MEMBERSHIP,
-            payload,
-        )
-        .await
-        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
-
-        // op delivered via onion routing from the app layer
-
-        Ok(())
+        let (_hash, gossip_bytes) = ops::sign_and_store_op(
+            &mut *store_guard, &core.private_key, ops::log_ids::MEMBERSHIP, payload,
+        ).await.map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        Ok(SendResult { id: org_id, op_bytes: gossip_bytes })
     })
 }
 
@@ -2921,6 +2913,7 @@ pub fn change_member_permission(
             op_type: "change_permission".into(),
             org_id: org_id.clone(),
             member_key: member_public_key,
+            moderator_key: core.public_key_hex.clone(),
             access_level: Some(new_level.as_str().to_string()),
             cooldown_secs: None,
             iced_until: None,
@@ -2992,6 +2985,7 @@ pub fn set_user_cooldown(
             op_type: "set_user_cooldown".into(),
             org_id: org_id.clone(),
             member_key: member_public_key,
+            moderator_key: core.public_key_hex.clone(),
             access_level: None,
             cooldown_secs: Some(cooldown_secs),
             iced_until: None,
@@ -3035,6 +3029,7 @@ pub fn ice_member(
             op_type: "ice_member".into(),
             org_id: org_id.clone(),
             member_key: member_public_key,
+            moderator_key: core.public_key_hex.clone(),
             access_level: None,
             cooldown_secs: None,
             iced_until: Some(iced_until),
@@ -3072,6 +3067,7 @@ pub fn unice_member(org_id: String, member_public_key: String) -> Result<(), Aut
             op_type: "unice_member".into(),
             org_id: org_id.clone(),
             member_key: member_public_key,
+            moderator_key: core.public_key_hex.clone(),
             access_level: None,
             cooldown_secs: None,
             iced_until: None,
@@ -3546,6 +3542,8 @@ pub fn resolve_pkarr(z32_key: String) -> Result<Option<PkarrResolved>, CoreError
             cover_blob_id: r.cover_blob_id,
             public_key: r.public_key,
             email: r.email,
+            org_id: r.org_id,
+            join_sig: r.join_sig,
         }))
     })
 }
@@ -3560,6 +3558,8 @@ pub struct PkarrResolved {
     pub cover_blob_id: Option<String>,
     pub public_key: String,
     pub email: bool,
+    pub org_id: Option<String>,
+    pub join_sig: Option<String>,
 }
 
 // ── Network / Iroh P2P ───────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import { MessageComposer } from '../components/MessageComposer';
 import { extractMentions } from '../components/MessageText';
 import { useMessagesStore } from '../stores/useMessagesStore';
 import { useProfileStore } from '../stores/useProfileStore';
-import { sendMentionPushNotification } from '../services/pushNotifications';
+import { sendMentionPushNotification, sendReplyPushNotification } from '../services/pushNotifications';
 
 type Props = NativeStackScreenProps<any, 'RoomChat'>;
 
@@ -29,19 +29,7 @@ export function RoomChatScreen({ route }: Props) {
   const contextKey = roomId;
   const messageList = messages[contextKey] || [];
 
-  useEffect(() => {
-    loadMessages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      loadMessages();
-      return () => {};
-    }, [roomId]),
-  );
-
-  async function loadMessages() {
+  const loadMessages = React.useCallback(async () => {
     setLoading(true);
     try {
       await fetchMessages(roomId, null);
@@ -50,11 +38,23 @@ export function RoomChatScreen({ route }: Props) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [fetchMessages, roomId]);
+
+  useEffect(() => {
+    loadMessages();
+  }, [loadMessages]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadMessages();
+      return () => {};
+    }, [loadMessages]),
+  );
 
   async function handleSend(text: string) {
     try {
       const mentionedUsernames = extractMentions(text);
+      const replyToId = replyingTo;
       await sendMessage({
         roomId,
         contentType: 'text',
@@ -63,6 +63,20 @@ export function RoomChatScreen({ route }: Props) {
         replyTo: replyingTo ?? undefined,
       });
       setReplyingTo(null);
+      if (replyToId) {
+        const replied = messageList.find(m => m.messageId === replyToId);
+        const myKey = myProfile?.publicKey;
+        if (replied?.authorKey && replied.authorKey !== myKey) {
+          sendReplyPushNotification({
+            senderName: myProfile?.username ?? 'Someone',
+            recipientKey: replied.authorKey,
+            orgId,
+            roomId,
+            orgName: roomName,
+            preview: text,
+          }).catch(() => {});
+        }
+      }
       if (mentionedUsernames.length > 0) {
         const mentionedKeys = Object.values(profileCache)
           .filter(p => mentionedUsernames.includes(p.username) && p.publicKey !== myProfile?.publicKey)

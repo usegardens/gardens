@@ -5,10 +5,10 @@ describe('buildRelayTxtRecord', () => {
   it('produces the correct format', () => {
     const record = buildRelayTxtRecord(
       'aabbcc00'.repeat(8),         // 64-char pubkey hex
-      'https://relay.gardens.app/hop',
+      'https://relay.usegardens.com/hop',
     );
     expect(record).toBe(
-      'v=gardens1;t=relay;n=https://relay.gardens.app/hop;a=aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00',
+      'v=gardens1;t=relay;n=https://relay.usegardens.com/hop;a=aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00aabbcc00',
     );
   });
 });
@@ -16,7 +16,7 @@ describe('buildRelayTxtRecord', () => {
 describe('parseRelayTxtRecord', () => {
   it('round-trips', () => {
     const pubkeyHex = 'aabbcc00'.repeat(8);
-    const hopUrl    = 'https://relay.gardens.app/hop';
+    const hopUrl    = 'https://relay.usegardens.com/hop';
     const record    = buildRelayTxtRecord(pubkeyHex, hopUrl);
     const parsed    = parseRelayTxtRecord(record);
     expect(parsed).toEqual({ pubkeyHex, hopUrl });

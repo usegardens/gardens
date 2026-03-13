@@ -168,20 +168,19 @@ pub async fn publish_profile(
 /// Publish an org profile to the pkarr DHT using the user's key (legacy).
 pub async fn publish_org(
     private_key_hex: &str,
-    org_id: &str,
+    _org_id: &str,
     name: &str,
     description: Option<&str>,
     avatar_blob_id: Option<&str>,
     cover_blob_id: Option<&str>,
 ) -> Result<(), String> {
-    publish_org_with_key(private_key_hex, org_id, name, description, avatar_blob_id, cover_blob_id, None, false).await
+    publish_org_with_key(private_key_hex, name, description, avatar_blob_id, cover_blob_id, None, false).await
 }
 
 /// Publish an org profile to the pkarr DHT using the org's own key.
 /// This is the preferred method for org publishing.
 pub async fn publish_org_with_key(
     private_key_hex: &str,
-    org_id: &str,
     name: &str,
     description: Option<&str>,
     avatar_blob_id: Option<&str>,
@@ -195,7 +194,14 @@ pub async fn publish_org_with_key(
 
     let keypair = Keypair::from_secret_key(&pk_arr);
 
-    let txt_value = build_org_txt_record(name, description, avatar_blob_id, cover_blob_id, relay_z32, email_enabled);
+    let txt_value = build_org_txt_record(
+        name,
+        description,
+        avatar_blob_id,
+        cover_blob_id,
+        relay_z32,
+        email_enabled,
+    );
 
     let txt = pkarr::dns::rdata::TXT::try_from(txt_value.as_str())
         .map_err(|e| format!("invalid txt: {}", e))?;
@@ -211,12 +217,12 @@ pub async fn publish_org_with_key(
         .map_err(|e| format!("failed to create pkarr client: {}", e))?;
 
     // Publish fire-and-forget
-    let oid = org_id.to_string();
+    let org_name = name.to_string();
     tokio::spawn(async move {
         if let Err(e) = client.publish(&signed_packet, None).await {
             log::error!("[pkarr] failed to publish org: {}", e);
         } else {
-            log::info!("[pkarr] published org {}", oid);
+            log::info!("[pkarr] published org {}", org_name);
         }
     });
     
@@ -279,6 +285,8 @@ pub struct PkarrResolvedRecord {
     pub cover_blob_id: Option<String>, // for org profiles
     pub public_key: String, // z32-encoded
     pub email: bool,
+    pub org_id: Option<String>,     // for org profiles
+    pub join_sig: Option<String>,   // for org profiles (base64 sig)
 }
 
 /// Parse a TXT record string into a structured record.
@@ -293,6 +301,8 @@ fn parse_txt_record(txt: &str, z32_key: &str) -> Result<PkarrResolvedRecord, Str
         cover_blob_id: None,
         public_key: z32_key.to_string(),
         email: false,
+        org_id: None,
+        join_sig: None,
     };
     
     for part in txt.split(';') {
@@ -306,6 +316,8 @@ fn parse_txt_record(txt: &str, z32_key: &str) -> Result<PkarrResolvedRecord, Str
                 "a" => record.avatar_blob_id = Some(value.to_string()),
                 "c" => record.cover_blob_id = Some(value.to_string()),
                 "email" => record.email = value == "1",
+                "id" => record.org_id = Some(value.to_string()),
+                "j" => record.join_sig = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -362,10 +374,10 @@ mod tests {
 
     #[test]
     fn parse_relay_record() {
-        let txt = format!("v=gardens1;t=relay;n=https://relay.gardens.app/hop;a={}", "ab".repeat(32));
+        let txt = format!("v=gardens1;t=relay;n=https://relay.usegardens.com/hop;a={}", "ab".repeat(32));
         let record = parse_txt_record(&txt, "testz32key").unwrap();
         assert_eq!(record.record_type, "relay");
-        assert_eq!(record.name.as_deref(), Some("https://relay.gardens.app/hop"));
+        assert_eq!(record.name.as_deref(), Some("https://relay.usegardens.com/hop"));
         assert_eq!(record.avatar_blob_id.as_deref(), Some(&"ab".repeat(32) as &str));
     }
 
@@ -477,7 +489,6 @@ async fn republish_all(read_pool: &SqlitePool) -> Result<(), String> {
 
                 if let Err(e) = publish_org_with_key(
                     &org_pk_hex,
-                    &org_id,
                     &name,
                     description.as_deref(),
                     avatar.as_deref(),

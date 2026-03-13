@@ -5,16 +5,19 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  Image,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../navigation/RootNavigator';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Welcome'>;
+const gardensLogo = require('../../assets/gardens-logo.png');
 
 export function WelcomeScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.hero}>
+        <Image source={gardensLogo} style={styles.logoImage} resizeMode="contain" />
         <Text style={styles.logo}>Gardens</Text>
         <Text style={styles.tagline}>Private, local-first messaging</Text>
       </View>
@@ -52,6 +55,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
+  },
+  logoImage: {
+    width: 260,
+    height: 190,
+    marginBottom: 8,
   },
   logo: {
     fontSize: 56,

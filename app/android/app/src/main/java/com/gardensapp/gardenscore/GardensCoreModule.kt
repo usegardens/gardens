@@ -799,6 +799,48 @@ class GardensCoreModule(private val reactContext: ReactApplicationContext) : Rea
   }
 
   @ReactMethod
+  fun createOrgAdminThread(orgId: String, adminKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.createOrgAdminThread(orgId, adminKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun listOrgAdminThreads(orgId: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val threads = uniffi.gardens_core.listOrgAdminThreads(orgId)
+        val arr = Arguments.createArray()
+        for (t in threads) {
+          val map = Arguments.createMap()
+          map.putString("threadId", t.threadId)
+          map.putString("orgId", t.orgId)
+          map.putString("initiatorKey", t.initiatorKey)
+          map.putString("participantKey", t.participantKey)
+          map.putString("adminKey", t.adminKey)
+          map.putDouble("createdAt", t.createdAt.toDouble())
+          t.lastMessageAt?.let { map.putDouble("lastMessageAt", it.toDouble()) } ?: map.putNull("lastMessageAt")
+          map.putBoolean("isRequest", t.isRequest)
+          arr.pushMap(map)
+        }
+        promise.resolve(arr)
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  @ReactMethod
   fun deleteConversation(threadId: String, promise: Promise) {
     ensureLoaded()
     scope.launch {
@@ -882,8 +924,11 @@ class GardensCoreModule(private val reactContext: ReactApplicationContext) : Rea
     ensureLoaded()
     scope.launch {
       try {
-        uniffi.gardens_core.removeMemberFromOrg(orgId, memberPublicKey)
-        promise.resolve(null)
+        val result = uniffi.gardens_core.removeMemberFromOrg(orgId, memberPublicKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
       } catch (e: Exception) {
         promise.reject("AuthError", e)
       }
@@ -920,6 +965,139 @@ class GardensCoreModule(private val reactContext: ReactApplicationContext) : Rea
         promise.resolve(arr)
       } catch (e: Exception) {
         promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun listAuditLog(orgId: String, limit: Double, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val entries = uniffi.gardens_core.listAuditLog(orgId, limit.toUInt())
+        val arr = Arguments.createArray()
+        for (e in entries) {
+          val map = Arguments.createMap()
+          map.putDouble("id", e.id.toDouble())
+          map.putString("orgId", e.orgId)
+          map.putString("moderatorKey", e.moderatorKey)
+          map.putString("targetKey", e.targetKey)
+          map.putString("actionType", e.actionType)
+          e.details?.let { map.putString("details", it) } ?: map.putNull("details")
+          map.putDouble("createdAt", e.createdAt.toDouble())
+          arr.pushMap(map)
+        }
+        promise.resolve(arr)
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun isMuted(orgId: String, memberKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val muted = uniffi.gardens_core.isMuted(orgId, memberKey)
+        promise.resolve(muted)
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun getMuteExpiration(orgId: String, memberKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val expiresAt = uniffi.gardens_core.getMuteExpiration(orgId, memberKey)
+        promise.resolve(expiresAt.toDouble())
+      } catch (e: Exception) {
+        promise.reject("CoreError", e)
+      }
+    }
+  }
+
+  // ── Member moderation ─────────────────────────────────────────────────────────
+
+  @ReactMethod
+  fun kickMember(orgId: String, memberPublicKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.kickMember(orgId, memberPublicKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("AuthError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun banMember(orgId: String, memberPublicKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.banMember(orgId, memberPublicKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("AuthError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun unbanMember(orgId: String, memberPublicKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.unbanMember(orgId, memberPublicKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("AuthError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun muteMember(orgId: String, memberPublicKey: String, durationSeconds: Double, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.muteMember(orgId, memberPublicKey, durationSeconds.toLong())
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("AuthError", e)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun unmuteMember(orgId: String, memberPublicKey: String, promise: Promise) {
+    ensureLoaded()
+    scope.launch {
+      try {
+        val result = uniffi.gardens_core.unmuteMember(orgId, memberPublicKey)
+        val map = Arguments.createMap()
+        map.putString("id", result.id)
+        map.putString("opBytesBase64", Base64.encodeToString(result.opBytes, Base64.DEFAULT))
+        promise.resolve(map)
+      } catch (e: Exception) {
+        promise.reject("AuthError", e)
       }
     }
   }

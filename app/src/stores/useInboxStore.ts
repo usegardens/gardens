@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { prepareOutboundEmail } from '../ffi/gardensCore';
 
-const RELAY_URL = 'https://gardens-relay.stereos.workers.dev';
+const RELAY_URL = 'https://relay.usegardens.com';
 
 export interface InboxEmail {
   messageId: string;

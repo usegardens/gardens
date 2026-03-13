@@ -7,19 +7,34 @@ interface MessageActionsSheetProps {
   sheetId: string;
   payload?: {
     canDelete: boolean;
+    canResolve?: boolean;
+    extraActions?: Array<{ label: string; destructive?: boolean; onPress?: () => void }>;
     quickReactions?: string[];
     customEmojis?: Record<string, { blobId: string; mimeType: string; roomId: string | null }>;
+    resolveLabel?: string;
     onReact?: (emoji: string) => void;
     onReply?: () => void;
     onDelete?: () => void;
+    onResolve?: () => void;
   };
 }
 
 export function MessageActionsSheet(props: MessageActionsSheetProps) {
-  const { canDelete, quickReactions = [], customEmojis = {}, onReact, onReply, onDelete } = props.payload || {};
+  const {
+    canDelete,
+    canResolve,
+    extraActions = [],
+    quickReactions = [],
+    customEmojis = {},
+    resolveLabel = 'Resolve Message',
+    onReact,
+    onReply,
+    onDelete,
+    onResolve,
+  } = props.payload || {};
 
   return (
-    <ActionSheet id={props.sheetId} containerStyle={styles.sheet}>
+    <ActionSheet id={props.sheetId} useBottomSafeAreaPadding containerStyle={styles.sheet}>
       <View style={styles.container}>
         {quickReactions.length > 0 && (
           <View style={styles.reactionRow}>
@@ -73,6 +88,19 @@ export function MessageActionsSheet(props: MessageActionsSheetProps) {
           <Text style={styles.rowText}>Reply</Text>
         </TouchableOpacity>
 
+        {extraActions.map((action) => (
+          <TouchableOpacity
+            key={action.label}
+            style={styles.row}
+            onPress={() => {
+              SheetManager.hide(props.sheetId);
+              action.onPress?.();
+            }}
+          >
+            <Text style={action.destructive ? styles.rowTextDanger : styles.rowText}>{action.label}</Text>
+          </TouchableOpacity>
+        ))}
+
         {canDelete && (
           <TouchableOpacity
             style={styles.row}
@@ -82,6 +110,18 @@ export function MessageActionsSheet(props: MessageActionsSheetProps) {
             }}
           >
             <Text style={styles.rowTextDanger}>Delete</Text>
+          </TouchableOpacity>
+        )}
+
+        {canResolve && (
+          <TouchableOpacity
+            style={styles.row}
+            onPress={() => {
+              SheetManager.hide(props.sheetId);
+              onResolve?.();
+            }}
+          >
+            <Text style={styles.rowTextDanger}>{resolveLabel}</Text>
           </TouchableOpacity>
         )}
       </View>

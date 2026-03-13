@@ -15,15 +15,22 @@ import {
   type OrgSummary,
   type Room,
 } from '../ffi/gardensCore';
+
 import { uploadBlobToRelay, DEFAULT_RELAY_URL } from './useProfileStore';
 import { broadcastOp } from './useSyncStore';
+
+/** The canonical name for the always-writeable lobby room every org gets. */
+export const BUFFER_ROOM_NAME = 'Buffer Room';
 
 interface OrgsState {
   orgs: OrgSummary[];
   rooms: Record<string, Room[]>; // orgId → rooms
   deletedOrgIds: string[];
+  newOrgIds: string[]; // orgs added since last acknowledgment
+  _orgsInitialized: boolean;
 
   fetchMyOrgs(): Promise<void>;
+  clearNewOrgs(): void;
   createOrg(
     name: string,
     typeLabel: string,
@@ -57,16 +64,42 @@ export const useOrgsStore = create<OrgsState>((set, get) => ({
   orgs: [],
   rooms: {},
   deletedOrgIds: [],
+  newOrgIds: [],
+  _orgsInitialized: false,
 
   async fetchMyOrgs() {
     const orgs = await dcListMyOrgs();
     const hidden = new Set(get().deletedOrgIds);
-    set({ orgs: orgs.filter(o => !hidden.has(o.orgId)) });
+    const filtered = orgs.filter(o => !hidden.has(o.orgId));
+    const { _orgsInitialized, orgs: prevOrgs, newOrgIds } = get();
+    if (_orgsInitialized) {
+      const prevIds = new Set(prevOrgs.map(o => o.orgId));
+      const appeared = filtered.filter(o => !prevIds.has(o.orgId)).map(o => o.orgId);
+      if (appeared.length > 0) {
+        const existing = new Set(newOrgIds);
+        set({ orgs: filtered, newOrgIds: [...newOrgIds, ...appeared.filter(id => !existing.has(id))], _orgsInitialized: true });
+        return;
+      }
+    }
+    set({ orgs: filtered, _orgsInitialized: true });
+  },
+
+  clearNewOrgs() {
+    set({ newOrgIds: [] });
   },
 
   async createOrg(name, typeLabel, description, isPublic) {
     const orgId = await dcCreateOrg(name, typeLabel, description, isPublic);
+    // Automatically provision a Buffer Room so every new org has a writable
+    // lobby that read-only members can also post in.
+    try {
+      await dcCreateRoom(orgId, BUFFER_ROOM_NAME);
+    } catch (e) {
+      console.warn('[useOrgsStore] Failed to auto-create Buffer Room:', e);
+    }
     await get().fetchMyOrgs();
+    set(s => ({ newOrgIds: s.newOrgIds.filter(id => id !== orgId) }));
+    await get().fetchRooms(orgId);
     return orgId;
   },
 

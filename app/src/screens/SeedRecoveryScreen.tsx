@@ -4,7 +4,7 @@
  * Flow:
  * 1. User enters all 24 BIP-39 words (one TextInput per word)
  * 2. importFromMnemonic() → derives keypair via Rust UniFFI
- * 3. Persists to Keychain with biometric enrolment
+ * 3. Persists to Keychain secure storage
  * 4. Navigation to Main handled by RootNavigator reacting to isUnlocked
  */
 
@@ -24,13 +24,24 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../navigation/RootNavigator';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useProfileStore } from '../stores/useProfileStore';
+import { bootstrapRecoveredAccount } from '../utils/accountRecovery';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'SeedRecovery'>;
 
 const WORD_COUNT = 24;
 
+function sanitizeMnemonicToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^\d+[).:-]*/, '')
+    .replace(/[^a-z]/g, '');
+}
+
 export function SeedRecoveryScreen(_props: Props) {
   const importAccount = useAuthStore(s => s.importAccount);
+  const { setLocalUsername } = useProfileStore();
 
   const [words, setWords]   = useState<string[]>(Array(WORD_COUNT).fill(''));
   const [loading, setLoading] = useState(false);
@@ -40,32 +51,49 @@ export function SeedRecoveryScreen(_props: Props) {
 
   function updateWord(index: number, value: string) {
     // Split on space/newline so a paste of the full phrase auto-fills all inputs.
-    const pasted = value.trim().split(/\s+/);
+    const pasted = value
+      .trim()
+      .split(/\s+/)
+      .map(sanitizeMnemonicToken)
+      .filter(Boolean);
     if (pasted.length > 1) {
       const next = [...words];
       pasted.forEach((w, i) => {
-        if (index + i < WORD_COUNT) next[index + i] = w.toLowerCase();
+        if (index + i < WORD_COUNT) next[index + i] = w;
       });
       setWords(next);
       const nextFocus = Math.min(index + pasted.length, WORD_COUNT - 1);
       inputRefs.current[nextFocus]?.focus();
     } else {
       const next = [...words];
-      next[index] = value.toLowerCase();
+      next[index] = sanitizeMnemonicToken(value);
       setWords(next);
     }
   }
 
   async function handleRestore() {
-    const filled = words.filter(w => w.trim().length > 0);
+    const normalizedWords = words.map(sanitizeMnemonicToken);
+    const filled = normalizedWords.filter(w => w.length > 0);
     if (filled.length !== WORD_COUNT) {
       Alert.alert('Incomplete seed', `Please enter all ${WORD_COUNT} words.`);
+      return;
+    }
+    if (normalizedWords.some(w => !/^[a-z]+$/.test(w))) {
+      Alert.alert('Invalid seed phrase', 'Seed words can only contain letters.');
       return;
     }
 
     setLoading(true);
     try {
-      await importAccount(words.map(w => w.trim()));
+      const kp = await importAccount(normalizedWords);
+      await bootstrapRecoveredAccount(kp.publicKeyHex);
+      const profileState = useProfileStore.getState();
+      const restoredProfile = profileState.myProfile ?? profileState.profileCache[kp.publicKeyHex] ?? null;
+      if (restoredProfile?.username?.trim()) {
+        await setLocalUsername(restoredProfile.username.trim());
+      } else {
+        await setLocalUsername(kp.publicKeyHex.slice(0, 12));
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       Alert.alert('Invalid seed phrase', message);
@@ -116,7 +144,7 @@ export function SeedRecoveryScreen(_props: Props) {
         >
           {loading
             ? <ActivityIndicator color="#0a0a0a" />
-            : <Text style={styles.btnText}>Restore &amp; Enroll Biometric</Text>
+            : <Text style={styles.btnText}>Restore Account</Text>
           }
         </TouchableOpacity>
       </ScrollView>

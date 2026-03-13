@@ -1,20 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Image, Share, StyleSheet,
 } from 'react-native';
 import ActionSheet, { SheetManager, SheetProps } from 'react-native-actions-sheet';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Pencil, Search, Settings, X } from 'lucide-react-native';
+import { Pencil, Settings, X } from 'lucide-react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useProfileStore } from '../stores/useProfileStore';
-import { ignoreUser, unignoreUser, listIgnoredUsers } from '../ffi/gardensCore';
 import type { MainStackParamList } from '../navigation/RootNavigator';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
 
 export function ProfileSheet(props: SheetProps<'profile-sheet'>) {
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
   const { myProfile, profilePicUri, localUsername, setProfilePicUri } = useProfileStore();
   const { keypair } = useAuthStore();
@@ -22,27 +23,6 @@ export function ProfileSheet(props: SheetProps<'profile-sheet'>) {
   const publicKey = myProfile?.publicKey ?? keypair?.publicKeyHex ?? '';
   const username  = myProfile?.username ?? localUsername ?? 'Anonymous';
   const initials  = username.slice(0, 2).toUpperCase();
-
-  const [isIgnored, setIsIgnored] = useState(false);
-
-  useEffect(() => {
-    if (publicKey) {
-      listIgnoredUsers().then((ignored) => {
-        setIsIgnored(ignored.includes(publicKey));
-      }).catch(() => {});
-    }
-  }, [publicKey]);
-
-  async function handleIgnoreToggle() {
-    try {
-      if (isIgnored) {
-        await unignoreUser(publicKey);
-      } else {
-        await ignoreUser(publicKey);
-      }
-      setIsIgnored(!isIgnored);
-    } catch {}
-  }
 
   async function handlePickImage() {
     const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.8, selectionLimit: 1 });
@@ -61,7 +41,8 @@ export function ProfileSheet(props: SheetProps<'profile-sheet'>) {
     <ActionSheet
       id={props.sheetId}
       gestureEnabled
-      containerStyle={ps.container}
+      useBottomSafeAreaPadding
+      containerStyle={[ps.container, { paddingBottom: insets.bottom + 24 }]}
       indicatorStyle={ps.handle}
     >
       {/* Header row */}
@@ -113,29 +94,12 @@ export function ProfileSheet(props: SheetProps<'profile-sheet'>) {
         <View style={ps.menuSection}>
           <TouchableOpacity
             style={ps.menuItem}
-            onPress={() => { close(); navigation.navigate('DiscoverOrgs'); }}
-          >
-            <Search size={20} color="#fff" />
-            <Text style={ps.menuItemText}>Discover Communities</Text>
-          </TouchableOpacity>
-          <View style={ps.menuDivider} />
-          <TouchableOpacity
-            style={ps.menuItem}
             onPress={() => { close(); navigation.navigate('Settings'); }}
           >
             <Settings size={20} color="#fff" />
             <Text style={ps.menuItemText}>Settings</Text>
           </TouchableOpacity>
         </View>
-
-        <TouchableOpacity
-          style={isIgnored ? ps.ignoreActiveBtn : ps.ignoreBtn}
-          onPress={handleIgnoreToggle}
-        >
-          <Text style={isIgnored ? ps.ignoreActiveBtnText : ps.ignoreBtnText}>
-            {isIgnored ? 'Unignore User' : 'Ignore User'}
-          </Text>
-        </TouchableOpacity>
       </ScrollView>
     </ActionSheet>
   );
@@ -165,8 +129,4 @@ const ps = StyleSheet.create({
   menuItem:       { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 16 },
   menuItemText:   { color: '#fff', fontSize: 15, fontWeight: '500' },
   menuDivider:    { height: 1, backgroundColor: '#2a2a2a', marginLeft: 50 },
-  ignoreBtn:      { backgroundColor: '#1a1a1a', borderRadius: 10, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#555', marginBottom: 16 },
-  ignoreBtnText:  { color: '#aaa', fontSize: 15, fontWeight: '600' },
-  ignoreActiveBtn:     { backgroundColor: '#1a1a1a', borderRadius: 10, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#3b82f6', marginBottom: 16 },
-  ignoreActiveBtnText: { color: '#3b82f6', fontSize: 15, fontWeight: '600' },
 });

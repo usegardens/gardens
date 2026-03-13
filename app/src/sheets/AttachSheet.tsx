@@ -4,7 +4,7 @@ import ActionSheet, { SheetManager, SheetProps } from 'react-native-actions-shee
 
 export function AttachSheet(props: SheetProps<'attach-sheet'>) {
   return (
-    <ActionSheet id={props.sheetId} gestureEnabled containerStyle={styles.container}>
+    <ActionSheet id={props.sheetId} gestureEnabled useBottomSafeAreaPadding containerStyle={styles.container}>
       <TouchableOpacity
         style={styles.option}
         onPress={() => SheetManager.hide('attach-sheet', { returnValue: 'media' })}

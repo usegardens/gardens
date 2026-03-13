@@ -52,6 +52,8 @@ export interface PkarrResolved {
   coverBlobId: string | null;
   publicKey: string;
   email: boolean;
+  orgId: string | null;
+  joinSig: string | null;
 }
 
 export interface OnionHopFfi {
@@ -155,6 +157,17 @@ export interface DmThread {
   isRequest: boolean;
 }
 
+export interface OrgAdminThread {
+  threadId: string;
+  orgId: string;
+  initiatorKey: string;
+  participantKey: string;
+  adminKey: string;
+  createdAt: number;
+  lastMessageAt: number | null;
+  isRequest: boolean;
+}
+
 /** Returned by sendMessage and createDmThread. op_bytes must be forwarded via onion routing. */
 export interface SendResult {
   /** message_id or thread_id (op hash hex) */
@@ -188,6 +201,16 @@ export interface MemberInfo {
   joinedAt: number;
 }
 
+export interface AuditLogEntry {
+  id: number;
+  orgId: string;
+  moderatorKey: string;
+  targetKey: string;
+  actionType: string;
+  details: string | null;
+  createdAt: number;
+}
+
 // ── Native module interface ───────────────────────────────────────────────────
 
 interface GardensCoreNative {
@@ -208,7 +231,7 @@ interface GardensCoreNative {
   getProfile(publicKey: string): Promise<Profile | null>;
   createOrg(name: string, typeLabel: string, description: string | null, isPublic: boolean): Promise<string>;
   listMyOrgs(): Promise<OrgSummary[]>;
-  updateOrg(orgId: string, name: string | null, typeLabel: string | null, description: string | null, avatarBlobId: string | null, coverBlobId: string | null, welcomeText: string | null, customEmojiJson: string | null, orgCooldownSecs: number | null, isPublic: boolean | null, emailEnabled: boolean | null): Promise<string>; // returns base64 op bytes
+  updateOrg(orgId: string, name: string | null, typeLabel: string | null, description: string | null, avatarBlobId: string | null, coverBlobId: string | null, welcomeText: string | null, customEmojiJson: string | null, orgCooldownSecs: number | null, isPublic: boolean | null, emailEnabled: boolean | null): Promise<Uint8Array | number[] | string>;
   createRoom(orgId: string, name: string): Promise<string>;
   listRooms(orgId: string, includeArchived: boolean): Promise<Room[]>;
   updateRoom(orgId: string, roomId: string, name: string | null, roomCooldownSecs: number | null): Promise<void>;
@@ -236,11 +259,11 @@ interface GardensCoreNative {
     locationRoomId: string | null,
     startAt: number | null,
     endAt: number | null,
-  ): Promise<string>; // returns base64 op bytes
-  deleteEvent(orgId: string, eventId: string): Promise<string>; // returns base64 op bytes
+  ): Promise<Uint8Array | number[] | string>;
+  deleteEvent(orgId: string, eventId: string): Promise<Uint8Array | number[] | string>;
   listEvents(orgId: string): Promise<Event[]>;
-  setEventRsvp(eventId: string, status: string): Promise<string>; // returns base64 op bytes
-  clearEventRsvp(eventId: string): Promise<string>; // returns base64 op bytes
+  setEventRsvp(eventId: string, status: string): Promise<Uint8Array | number[] | string>;
+  clearEventRsvp(eventId: string): Promise<Uint8Array | number[] | string>;
   listEventRsvps(eventId: string): Promise<EventRsvp[]>;
   sendMessage(
     roomId: string | null,
@@ -263,8 +286,12 @@ interface GardensCoreNative {
   listReactions(messageIds: string[]): Promise<Reaction[]>;
   deleteMessage(messageId: string, orgId: string | null): Promise<{ id: string; opBytesBase64: string }>;
   createDmThread(recipientKey: string): Promise<{ id: string; opBytesBase64: string }>;
+  createOrgAdminThread(orgId: string, adminKey: string): Promise<{ id: string; opBytesBase64: string }>;
   claimInviteToken(tokenBase64: string): Promise<{ id: string; opBytesBase64: string }>;
+  joinPublicOrg(orgId: string, orgPubkeyZ32: string, joinSigB64: string): Promise<{ id: string; opBytesBase64: string }>;
   listDmThreads(): Promise<DmThread[]>;
+  listOrgAdminThreads(orgId: string): Promise<OrgAdminThread[]>;
+  listMyOrgAdminThreads(): Promise<OrgAdminThread[]>;
   deleteConversation(threadId: string): Promise<{ id: string; opBytesBase64: string }>;
   leaveOrg(orgId: string): Promise<{ id: string; opBytesBase64: string }>;
   // Phase 3
@@ -274,21 +301,24 @@ interface GardensCoreNative {
   generateInviteToken(orgId: string, accessLevel: string, expiryTimestamp: number): string;
   verifyInviteToken(tokenBase64: string, currentTimestamp: number): InviteTokenInfo;
   addMemberDirect(orgId: string, memberPublicKey: string, accessLevel: string): Promise<{ id: string; opBytesBase64: string }>;
-  removeMemberFromOrg(orgId: string, memberPublicKey: string): Promise<void>;
+  removeMemberFromOrg(orgId: string, memberPublicKey: string): Promise<{ id: string; opBytesBase64: string }>;
   changeMemberPermission(orgId: string, memberPublicKey: string, newAccessLevel: string): Promise<void>;
   listOrgMembers(orgId: string): Promise<MemberInfo[]>;
+  listAuditLog(orgId: string, limit: number): Promise<AuditLogEntry[]>;
+  isMuted(orgId: string, memberKey: string): Promise<boolean>;
+  getMuteExpiration(orgId: string, memberKey: string): Promise<number>;
   setUserCooldown(orgId: string, memberPublicKey: string, cooldownSecs: number): Promise<void>;
   iceMember(orgId: string, memberPublicKey: string, durationSecs: number): Promise<void>;
   uniceMember(orgId: string, memberPublicKey: string): Promise<void>;
   listIcedMembers(orgId: string): Promise<IceInfo[]>;
   setOrgCooldown(orgId: string, cooldownSecs: number): Promise<void>;
   deleteOrg(orgId: string): Promise<void>;
-  // Member moderation (stubs)
-  kickMember(orgId: string, memberPublicKey: string): Promise<void>;
-  banMember(orgId: string, memberPublicKey: string): Promise<void>;
-  unbanMember(orgId: string, memberPublicKey: string): Promise<void>;
-  muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<void>;
-  unmuteMember(orgId: string, memberPublicKey: string): Promise<void>;
+  // Member moderation
+  kickMember(orgId: string, memberPublicKey: string): Promise<{ id: string; opBytesBase64: string }>;
+  banMember(orgId: string, memberPublicKey: string): Promise<{ id: string; opBytesBase64: string }>;
+  unbanMember(orgId: string, memberPublicKey: string): Promise<{ id: string; opBytesBase64: string }>;
+  muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<{ id: string; opBytesBase64: string }>;
+  unmuteMember(orgId: string, memberPublicKey: string): Promise<{ id: string; opBytesBase64: string }>;
   ignoreUser(publicKey: string): Promise<void>;
   unignoreUser(publicKey: string): Promise<void>;
   listIgnoredUsers(): Promise<string[]>;
@@ -373,8 +403,12 @@ function loadNative(): GardensCoreNative {
       async listReactions() { return []; },
       async deleteMessage() { throw new Error('gardens_core not loaded'); },
       async createDmThread() { throw new Error('gardens_core not loaded'); },
+      async createOrgAdminThread() { throw new Error('gardens_core not loaded'); },
       async claimInviteToken() { throw new Error('gardens_core not loaded'); },
+      async joinPublicOrg() { throw new Error('gardens_core not loaded'); },
       async listDmThreads() { return []; },
+      async listOrgAdminThreads() { return []; },
+      async listMyOrgAdminThreads() { return []; },
       async deleteConversation() { throw new Error('gardens_core not loaded'); },
       async leaveOrg() { throw new Error('gardens_core not loaded'); },
       async getConnectionStatus() { return 'Offline'; },
@@ -385,6 +419,9 @@ function loadNative(): GardensCoreNative {
       async removeMemberFromOrg() { throw new Error('gardens_core not loaded'); },
       async changeMemberPermission() { throw new Error('gardens_core not loaded'); },
       async listOrgMembers() { return []; },
+      async listAuditLog() { return []; },
+      async isMuted() { return false; },
+      async getMuteExpiration() { return 0; },
       async setUserCooldown() { throw new Error('gardens_core not loaded'); },
       async iceMember() { throw new Error('gardens_core not loaded'); },
       async uniceMember() { throw new Error('gardens_core not loaded'); },
@@ -515,8 +552,8 @@ export async function updateOrg(
   isPublic: boolean | null = null,
   emailEnabled: boolean | null = null,
 ): Promise<SendResult> {
-  const opBytesBase64 = await native.updateOrg(orgId, name, typeLabel, description, avatarBlobId, coverBlobId, welcomeText, customEmojiJson, orgCooldownSecs, isPublic, emailEnabled);
-  return { id: orgId, opBytes: base64ToBytes(opBytesBase64) };
+  const opBytes = await native.updateOrg(orgId, name, typeLabel, description, avatarBlobId, coverBlobId, welcomeText, customEmojiJson, orgCooldownSecs, isPublic, emailEnabled);
+  return { id: orgId, opBytes: coerceNativeBytes(opBytes) };
 }
 
 export async function createRoom(orgId: string, name: string): Promise<string> {
@@ -577,13 +614,13 @@ export async function updateEvent(
   startAt: number | null = null,
   endAt: number | null = null,
 ): Promise<SendResult> {
-  const opBytesBase64 = await native.updateEvent(orgId, eventId, title, description, locationType, locationText, locationRoomId, startAt, endAt);
-  return { id: eventId, opBytes: base64ToBytes(opBytesBase64) };
+  const opBytes = await native.updateEvent(orgId, eventId, title, description, locationType, locationText, locationRoomId, startAt, endAt);
+  return { id: eventId, opBytes: coerceNativeBytes(opBytes) };
 }
 
 export async function deleteEvent(orgId: string, eventId: string): Promise<SendResult> {
-  const opBytesBase64 = await native.deleteEvent(orgId, eventId);
-  return { id: eventId, opBytes: base64ToBytes(opBytesBase64) };
+  const opBytes = await native.deleteEvent(orgId, eventId);
+  return { id: eventId, opBytes: coerceNativeBytes(opBytes) };
 }
 
 export async function listEvents(orgId: string): Promise<Event[]> {
@@ -591,13 +628,13 @@ export async function listEvents(orgId: string): Promise<Event[]> {
 }
 
 export async function setEventRsvp(eventId: string, status: string): Promise<SendResult> {
-  const opBytesBase64 = await native.setEventRsvp(eventId, status);
-  return { id: eventId, opBytes: base64ToBytes(opBytesBase64) };
+  const opBytes = await native.setEventRsvp(eventId, status);
+  return { id: eventId, opBytes: coerceNativeBytes(opBytes) };
 }
 
 export async function clearEventRsvp(eventId: string): Promise<SendResult> {
-  const opBytesBase64 = await native.clearEventRsvp(eventId);
-  return { id: eventId, opBytes: base64ToBytes(opBytesBase64) };
+  const opBytes = await native.clearEventRsvp(eventId);
+  return { id: eventId, opBytes: coerceNativeBytes(opBytes) };
 }
 
 export async function listEventRsvps(eventId: string): Promise<EventRsvp[]> {
@@ -653,6 +690,11 @@ export async function createDmThread(recipientKey: string): Promise<SendResult> 
   return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
+export async function createOrgAdminThread(orgId: string, adminKey: string): Promise<SendResult> {
+  const raw = await native.createOrgAdminThread(orgId, adminKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
+}
+
 export async function claimInviteToken(tokenBase64: string): Promise<SendResult> {
   try {
     const raw = await native.claimInviteToken(tokenBase64);
@@ -666,11 +708,42 @@ export async function claimInviteToken(tokenBase64: string): Promise<SendResult>
   }
 }
 
+export async function joinPublicOrg(orgId: string, orgPubkeyZ32: string, joinSigB64: string): Promise<SendResult> {
+  try {
+    const raw = await native.joinPublicOrg(orgId, orgPubkeyZ32, joinSigB64);
+    return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('Unauthorized')) {
+      throw new AuthError('Unauthorized', err.message);
+    }
+    throw err;
+  }
+}
+
 export async function listDmThreads(): Promise<DmThread[]> {
   return native.listDmThreads();
 }
 
+export async function listOrgAdminThreads(orgId: string): Promise<OrgAdminThread[]> {
+  if (typeof native.listOrgAdminThreads !== 'function') {
+    console.warn('[gardensCore] listOrgAdminThreads unavailable in native module');
+    return [];
+  }
+  return native.listOrgAdminThreads(orgId);
+}
+
+export async function listMyOrgAdminThreads(): Promise<OrgAdminThread[]> {
+  if (typeof native.listMyOrgAdminThreads !== 'function') {
+    console.warn('[gardensCore] listMyOrgAdminThreads unavailable in native module');
+    return [];
+  }
+  return native.listMyOrgAdminThreads();
+}
+
 export async function deleteConversation(threadId: string): Promise<SendResult> {
+  if (typeof native.deleteConversation !== 'function') {
+    throw new Error('deleteConversation unavailable in native module');
+  }
   const raw = await native.deleteConversation(threadId);
   return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
@@ -754,8 +827,9 @@ export async function addMemberDirect(
 export async function removeMemberFromOrg(
   orgId: string,
   memberPublicKey: string,
-): Promise<void> {
-  return native.removeMemberFromOrg(orgId, memberPublicKey);
+): Promise<SendResult> {
+  const raw = await native.removeMemberFromOrg(orgId, memberPublicKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
 export async function changeMemberPermission(
@@ -768,6 +842,18 @@ export async function changeMemberPermission(
 
 export async function listOrgMembers(orgId: string): Promise<MemberInfo[]> {
   return native.listOrgMembers(orgId);
+}
+
+export async function listAuditLog(orgId: string, limit: number = 50): Promise<AuditLogEntry[]> {
+  return native.listAuditLog(orgId, limit);
+}
+
+export async function isMuted(orgId: string, memberKey: string): Promise<boolean> {
+  return native.isMuted(orgId, memberKey);
+}
+
+export async function getMuteExpiration(orgId: string, memberKey: string): Promise<number> {
+  return native.getMuteExpiration(orgId, memberKey);
 }
 
 export async function setUserCooldown(orgId: string, memberPublicKey: string, cooldownSecs: number): Promise<void> {
@@ -794,25 +880,30 @@ export async function deleteOrg(orgId: string): Promise<void> {
   return native.deleteOrg(orgId);
 }
 
-// Member moderation (stubs)
-export async function kickMember(orgId: string, memberPublicKey: string): Promise<void> {
-  return native.kickMember(orgId, memberPublicKey);
+// Member moderation
+export async function kickMember(orgId: string, memberPublicKey: string): Promise<SendResult> {
+  const raw = await native.kickMember(orgId, memberPublicKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
-export async function banMember(orgId: string, memberPublicKey: string): Promise<void> {
-  return native.banMember(orgId, memberPublicKey);
+export async function banMember(orgId: string, memberPublicKey: string): Promise<SendResult> {
+  const raw = await native.banMember(orgId, memberPublicKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
-export async function unbanMember(orgId: string, memberPublicKey: string): Promise<void> {
-  return native.unbanMember(orgId, memberPublicKey);
+export async function unbanMember(orgId: string, memberPublicKey: string): Promise<SendResult> {
+  const raw = await native.unbanMember(orgId, memberPublicKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
-export async function muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<void> {
-  return native.muteMember(orgId, memberPublicKey, durationSeconds);
+export async function muteMember(orgId: string, memberPublicKey: string, durationSeconds: number): Promise<SendResult> {
+  const raw = await native.muteMember(orgId, memberPublicKey, durationSeconds);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
-export async function unmuteMember(orgId: string, memberPublicKey: string): Promise<void> {
-  return native.unmuteMember(orgId, memberPublicKey);
+export async function unmuteMember(orgId: string, memberPublicKey: string): Promise<SendResult> {
+  const raw = await native.unmuteMember(orgId, memberPublicKey);
+  return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
 }
 
 export async function ignoreUser(publicKey: string): Promise<void> {
@@ -894,6 +985,12 @@ function base64ToBytes(base64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
   return bytes;
+}
+
+function coerceNativeBytes(value: Uint8Array | number[] | string): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return Uint8Array.from(value);
+  return base64ToBytes(value);
 }
 
 // ── Sync ─────────────────────────────────────────────────────────────────────

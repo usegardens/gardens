@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,72 +7,78 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { SheetManager } from 'react-native-actions-sheet';
-import { Mail, Plus } from 'lucide-react-native';
-import { useInboxStore } from '../stores/useInboxStore';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MessageSquare } from 'lucide-react-native';
+import type { MainStackParamList } from '../navigation/RootNavigator';
 import { useSyncStore, deriveInboxTopicHex } from '../stores/useSyncStore';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useConversationsStore } from '../stores/useConversationsStore';
+import { useProfileStore } from '../stores/useProfileStore';
 
-export function InboxScreen() {
-  const { emails, markRead } = useInboxStore();
+type Props = NativeStackScreenProps<MainStackParamList, 'Inbox'>;
+
+export function InboxScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const { requests, fetchConversations } = useConversationsStore();
   const { subscribe, unsubscribe } = useSyncStore();
   const { keypair } = useAuthStore();
+  const { profileCache, fetchProfile } = useProfileStore();
 
   const inboxTopic = keypair?.publicKeyHex ? deriveInboxTopicHex(keypair.publicKeyHex) : null;
 
   useFocusEffect(
     useCallback(() => {
+      fetchConversations().catch(() => {});
       if (!inboxTopic) return;
       subscribe(inboxTopic);
       return () => unsubscribe(inboxTopic);
-    }, [inboxTopic, subscribe, unsubscribe])
+    }, [fetchConversations, inboxTopic, subscribe, unsubscribe]),
   );
 
-
-  const openEmail = (messageId: string) => {
-    const email = emails.find((e) => e.messageId === messageId);
-    if (!email) return;
-    markRead(messageId);
-    SheetManager.show('email-detail-sheet', { payload: email });
-  };
-
-  const renderItem = ({ item }: { item: typeof emails[number] }) => (
-    <TouchableOpacity style={styles.row} onPress={() => openEmail(item.messageId)}>
-      <View style={styles.rowLeft}>
-        {!item.isRead && <View style={styles.unreadDot} />}
-        <View style={styles.rowText}>
-          <Text style={[styles.from, !item.isRead && styles.bold]}>{item.from}</Text>
-          <Text style={[styles.subject, !item.isRead && styles.bold]} numberOfLines={1}>
-            {item.subject}
-          </Text>
-          <Text style={styles.preview} numberOfLines={1}>{item.bodyText}</Text>
-        </View>
-      </View>
-      <Text style={styles.time}>
-        {new Date(item.receivedAt).toLocaleDateString()}
-      </Text>
-    </TouchableOpacity>
-  );
+  useEffect(() => {
+    requests.forEach((request) => {
+      const peerKey = request.initiatorKey === keypair?.publicKeyHex ? request.recipientKey : request.initiatorKey;
+      fetchProfile(peerKey).catch(() => {});
+    });
+  }, [fetchProfile, keypair?.publicKeyHex, requests]);
 
   return (
     <View style={styles.root}>
       <FlatList
-        data={emails}
-        keyExtractor={(e) => e.messageId}
-        renderItem={renderItem}
+        data={requests}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 32, flexGrow: requests.length === 0 ? 1 : 0 }}
+        keyExtractor={(item) => item.threadId}
+        renderItem={({ item }) => {
+          const peerKey = item.initiatorKey === keypair?.publicKeyHex ? item.recipientKey : item.initiatorKey;
+          const profile = profileCache[peerKey];
+          const title = profile?.username ?? `${peerKey.slice(0, 8)}…${peerKey.slice(-6)}`;
+          return (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => navigation.navigate('Conversation', { threadId: item.threadId, recipientKey: peerKey })}
+            >
+              <View style={styles.rowLeft}>
+                <View style={styles.unreadDot} />
+                <View style={styles.rowText}>
+                  <Text style={[styles.from, styles.bold]}>{title}</Text>
+                  <Text style={[styles.subject, styles.bold]} numberOfLines={1}>
+                    {item.isRequest ? 'Message request' : 'Conversation'}
+                  </Text>
+                  <Text style={styles.preview} numberOfLines={1}>Open to review and reply.</Text>
+                </View>
+              </View>
+              <Text style={styles.time}>{new Date(item.lastMessageAt ?? item.createdAt).toLocaleDateString()}</Text>
+            </TouchableOpacity>
+          );
+        }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Mail size={48} color="#444" />
-            <Text style={styles.emptyText}>No messages yet</Text>
+            <MessageSquare size={48} color="#6f5b47" />
+            <Text style={styles.emptyText}>No synced requests yet</Text>
           </View>
         }
       />
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => SheetManager.show('compose-email-sheet')}
-      >
-        <Plus size={24} color="#000" />
-      </TouchableOpacity>
     </View>
   );
 }
@@ -88,7 +94,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#222',
   },
   rowLeft: { flexDirection: 'row', flex: 1, alignItems: 'flex-start', gap: 8 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#F2E58F', marginTop: 6 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#d7b28d', marginTop: 6 },
   rowText: { flex: 1 },
   from: { color: '#aaa', fontSize: 12 },
   subject: { color: '#fff', fontSize: 15, marginTop: 2 },
@@ -97,20 +103,4 @@ const styles = StyleSheet.create({
   time: { color: '#555', fontSize: 11 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 120, gap: 12 },
   emptyText: { color: '#555', fontSize: 15 },
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#F2E58F',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
 });

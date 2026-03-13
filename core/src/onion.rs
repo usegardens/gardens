@@ -118,7 +118,7 @@ fn decode_payload(bytes: &[u8]) -> Result<OnionPayload, OnionError> {
 pub struct OnionHop {
     /// 32-byte Ed25519 public key of this hop (raw bytes, not hex).
     pub pubkey_bytes: [u8; 32],
-    /// HTTP URL where this hop accepts onion packets (e.g. "https://relay.gardens.app/hop").
+    /// HTTP URL where this hop accepts onion packets (e.g. "https://relay.usegardens.com/hop").
     pub next_url: String,
 }
 

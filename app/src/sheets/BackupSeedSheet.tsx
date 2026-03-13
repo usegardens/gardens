@@ -12,10 +12,12 @@ import {
 import ActionSheet, { SheetManager, SheetProps } from 'react-native-actions-sheet';
 import { X, Copy, Eye, EyeOff, Shield } from 'lucide-react-native';
 import * as Keychain from 'react-native-keychain';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MNEMONIC_SERVICE = 'gardens.mnemonic';
 
 export function BackupSeedSheet(props: SheetProps<'backup-seed-sheet'>) {
+  const insets = useSafeAreaInsets();
   const [mnemonic, setMnemonic] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [revealed, setRevealed] = useState(false);
@@ -77,6 +79,7 @@ export function BackupSeedSheet(props: SheetProps<'backup-seed-sheet'>) {
     <ActionSheet
       id={props.sheetId}
       gestureEnabled
+      useBottomSafeAreaPadding
       containerStyle={s.container}
       indicatorStyle={s.handle}
     >
@@ -89,7 +92,11 @@ export function BackupSeedSheet(props: SheetProps<'backup-seed-sheet'>) {
         <View style={s.headerSpacer} />
       </View>
 
-      <ScrollView style={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.content}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}
+        showsVerticalScrollIndicator={false}
+      >
         {loading ? (
           <View style={s.center}>
             <ActivityIndicator color="#fff" />

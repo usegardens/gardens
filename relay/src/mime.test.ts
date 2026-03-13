@@ -12,7 +12,7 @@ describe('buildMime', () => {
       reply_to_message_id: null,
       timestamp: 0,
     });
-    expect(raw).toContain('abc123@gardens-relay.stereos.workers.dev');
+    expect(raw).toContain('abc123@relay.usegardens.com');
     expect(raw).toContain('alice@example.com');
     // mimetext base64-encodes the subject as a MIME encoded-word
     expect(raw).toMatch(/Subject:.*Hello|Subject:.*SGVsbG8/);

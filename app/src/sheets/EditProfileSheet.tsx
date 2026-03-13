@@ -16,12 +16,15 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import RNFS from 'react-native-fs';
 import { useProfileStore } from '../stores/useProfileStore';
 import { uploadBlob } from '../ffi/gardensCore';
+import { claimProfileSlug } from './LocationPickerSheet';
+import { validateDisplayName } from '../utils/validation';
 
 export function EditProfileSheet(props: SheetProps<'edit-profile-sheet'>) {
   const { myProfile, localUsername, fetchMyProfile, profilePicUri, setProfilePicUri } = useProfileStore();
   
-  const [displayName, setDisplayName] = useState('');
-  const [bio, setBio] = useState('');
+  const [displayName, setDisplayName] = useState<string>(myProfile?.username || localUsername || '');
+  const [bio, setBio] = useState<string>(myProfile?.bio || '');
+  const [photoUri, setPhotoUri] = useState<string | null>(profilePicUri ? profilePicUri : null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -65,9 +68,10 @@ export function EditProfileSheet(props: SheetProps<'edit-profile-sheet'>) {
         selectionLimit: 1,
       });
 
-      if (result.assets && result.assets[0] && result.assets[0].uri) {
+      if (result.assets?.[0]?.uri) {
+        setPhotoUri(result.assets[0].uri ? result.assets[0].uri : null);
         const asset = result.assets[0];
-        if (type === 'avatar') {
+        if (type === 'avatar' && asset.uri) {
           setAvatarUri(asset.uri);
           await setProfilePicUri(asset.uri);
           try {
@@ -91,7 +95,7 @@ export function EditProfileSheet(props: SheetProps<'edit-profile-sheet'>) {
           } catch (e) {
             console.warn('[profile] Failed to upload avatar blob:', e);
           }
-        } else {
+        } else if (asset.uri) {
           setCoverUri(asset.uri);
         }
       }
@@ -100,9 +104,10 @@ export function EditProfileSheet(props: SheetProps<'edit-profile-sheet'>) {
     }
   };
 
-  const handleSave = async () => {
-    if (!displayName.trim()) {
-      Alert.alert('Error', 'Display name is required');
+  async function handleSave() {
+    const errorMsg = validateDisplayName(displayName);
+    if (errorMsg) {
+      Alert.alert('Invalid Name', errorMsg);
       return;
     }
 
@@ -116,6 +121,16 @@ export function EditProfileSheet(props: SheetProps<'edit-profile-sheet'>) {
         myProfile?.isPublic || false,
         avatarBlobId,
       );
+
+      if (myProfile?.isPublic && myProfile.publicKey) {
+        claimProfileSlug(myProfile.publicKey, displayName.trim()).then((result) => {
+          if (result) {
+            console.log('[slug] Profile slug refreshed:', result.url);
+          }
+        }).catch((err) => {
+          console.warn('[slug] failed to refresh profile slug:', err);
+        });
+      }
 
       SheetManager.hide('edit-profile-sheet');
     } catch (err: any) {

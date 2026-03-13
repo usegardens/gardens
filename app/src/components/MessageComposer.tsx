@@ -1,54 +1,66 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, SendHorizontal, Mic, Camera, Smile } from 'lucide-react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, Mic, SendHorizontal, Smile, X, VolumeX } from 'lucide-react-native';
 import {
-  View,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  LayoutChangeEvent,
+  PanResponder,
+  Platform,
+  StyleSheet,
+  Text,
   TextInput,
   TouchableOpacity,
-  Text,
-  StyleSheet,
-  Platform,
+  View,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SheetManager } from 'react-native-actions-sheet';
 import { launchImageLibrary } from 'react-native-image-picker';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import RNFS from 'react-native-fs';
-import { uploadBlob, initNetwork, isNetworkInitialized } from '../ffi/gardensCore';
 import { GifSearchModal } from './GifSearchModal';
-import { STANDARD_EMOJI_BY_CODE, STANDARD_EMOJI_CODES } from '../data/emoji';
 import { BlobImage } from './BlobImage';
+import { STANDARD_EMOJI_BY_CODE, STANDARD_EMOJI_CODES } from '../data/emoji';
+import { initNetwork, isNetworkInitialized, uploadBlob } from '../ffi/gardensCore';
 
-// Helper to convert base64 to Uint8Array without atob
+const INPUT_MIN_HEIGHT = 40;
+const INPUT_MAX_HEIGHT = 132;
+const RECORD_CANCEL_DISTANCE = 88;
+
 function base64ToBytes(base64: string): Uint8Array {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const lookup = new Uint8Array(256);
-  for (let i = 0; i < chars.length; i++) {
-    lookup[chars.charCodeAt(i)] = i;
-  }
+  for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
 
   const len = base64.length;
   let padding = 0;
   if (base64[len - 2] === '=') padding = 2;
   else if (base64[len - 1] === '=') padding = 1;
 
-  const bytesLen = (len * 3 / 4) - padding;
+  const bytesLen = (len * 3) / 4 - padding;
   const bytes = new Uint8Array(bytesLen);
+  let src = 0;
+  let dst = 0;
 
-  let i = 0;
-  let j = 0;
-  while (i < len) {
-    const a = lookup[base64.charCodeAt(i++)];
-    const b = lookup[base64.charCodeAt(i++)];
-    const c = lookup[base64.charCodeAt(i++)];
-    const d = lookup[base64.charCodeAt(i++)];
+  while (src < len) {
+    const a = lookup[base64.charCodeAt(src++)];
+    const b = lookup[base64.charCodeAt(src++)];
+    const c = lookup[base64.charCodeAt(src++)];
+    const d = lookup[base64.charCodeAt(src++)];
 
-    bytes[j++] = (a << 2) | (b >> 4);
-    if (j < bytesLen) bytes[j++] = ((b & 15) << 4) | (c >> 2);
-    if (j < bytesLen) bytes[j++] = ((c & 3) << 6) | d;
+    bytes[dst++] = (a << 2) | (b >> 4);
+    if (dst < bytesLen) bytes[dst++] = ((b & 15) << 4) | (c >> 2);
+    if (dst < bytesLen) bytes[dst++] = ((c & 3) << 6) | d;
   }
 
   return bytes;
+}
+
+function formatElapsed(ms: number): string {
+  const secs = Math.max(0, Math.floor(ms / 1000));
+  const mins = Math.floor(secs / 60);
+  const rem = secs % 60;
+  return `${mins}:${String(rem).padStart(2, '0')}`;
 }
 
 const audioRecorderPlayer = new AudioRecorderPlayer();
@@ -68,6 +80,8 @@ interface Props {
   channelCandidates?: string[];
   prefillText?: string | null;
   onPrefillApplied?: () => void;
+  isMuted?: boolean;
+  mutedUntil?: number;
 }
 
 export function MessageComposer({
@@ -85,37 +99,79 @@ export function MessageComposer({
   channelCandidates = [],
   prefillText,
   onPrefillApplied,
+  isMuted = false,
+  mutedUntil,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
-  const [recording, setRecording] = useState(false);
-  const [gifVisible, setGifVisible] = useState(false);
   const [trayOpen, setTrayOpen] = useState(false);
-  const recordingRef = useRef<boolean>(false);
+  const [gifVisible, setGifVisible] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordingElapsedMs, setRecordingElapsedMs] = useState(0);
+  const [recordingWillCancel, setRecordingWillCancel] = useState(false);
+  const inputHeight = useRef(new Animated.Value(INPUT_MIN_HEIGHT)).current;
+  const recordPathRef = useRef<string | null>(null);
+  const recordStartedAtRef = useRef<number | null>(null);
+  const recordingRef = useRef(false);
+  const [shellWidth, setShellWidth] = useState(0);
+
+  useEffect(() => {
+    if (!recording) {
+      setRecordingElapsedMs(0);
+      return;
+    }
+    const id = setInterval(() => {
+      if (recordStartedAtRef.current) {
+        setRecordingElapsedMs(Date.now() - recordStartedAtRef.current);
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, [recording]);
+
   useEffect(() => {
     if (!prefillText) return;
     setText(prev => {
       if (!prev) return prefillText;
-      const needsSpace = !prev.endsWith(' ');
-      return needsSpace ? `${prev} ${prefillText}` : `${prev}${prefillText}`;
+      return prev.endsWith(' ') ? `${prev}${prefillText}` : `${prev} ${prefillText}`;
     });
     onPrefillApplied?.();
   }, [prefillText, onPrefillApplied]);
 
-  const insets = useSafeAreaInsets();
+  function resetInputHeight() {
+    Animated.timing(inputHeight, {
+      toValue: INPUT_MIN_HEIGHT,
+      duration: 80,
+      useNativeDriver: false,
+    }).start();
+  }
+
+  function handleContentSizeChange(e: { nativeEvent: { contentSize: { height: number } } }) {
+    const nextHeight = Math.min(Math.max(e.nativeEvent.contentSize.height, INPUT_MIN_HEIGHT), INPUT_MAX_HEIGHT);
+    Animated.timing(inputHeight, {
+      toValue: nextHeight,
+      duration: 80,
+      useNativeDriver: false,
+    }).start();
+  }
 
   function handleSend() {
     const trimmed = text.trim();
     if (!trimmed) return;
     onSend(trimmed);
     setText('');
+    resetInputHeight();
   }
+
+  const ensureNetwork = useCallback(async () => {
+    const ok = await isNetworkInitialized();
+    if (!ok) await initNetwork(null);
+  }, []);
 
   async function pickMedia() {
     try {
-      const ok = await isNetworkInitialized();
-      if (!ok) await initNetwork(null);
-      const result = await launchImageLibrary({ 
-        mediaType: 'mixed', 
+      await ensureNetwork();
+      const result = await launchImageLibrary({
+        mediaType: 'mixed',
         includeBase64: true,
         maxWidth: 1920,
         maxHeight: 1920,
@@ -129,68 +185,109 @@ export function MessageComposer({
       const contentType: 'image' | 'video' = isVideo ? 'video' : 'image';
 
       let bytes: Uint8Array;
-
       if (asset.base64) {
-        // Use base64 data directly (works on both platforms)
         bytes = base64ToBytes(asset.base64);
       } else if (asset.uri) {
-        // Fallback to react-native-fs if no base64 (handles file:// URIs properly)
-        try {
-          const base64Data = await RNFS.readFile(asset.uri, 'base64');
-          bytes = base64ToBytes(base64Data);
-        } catch (readErr) {
-          console.error('Failed to read image file:', readErr);
-          throw new Error('Failed to read image file');
-        }
+        const base64Data = await RNFS.readFile(asset.uri, 'base64');
+        bytes = base64ToBytes(base64Data);
       } else {
         throw new Error('No image data available');
       }
 
       const blobId = await uploadBlob(bytes, mimeType, roomId);
-
-      // Blob is stored in the core's P2P blob store
-      if (roomId) {
-        // Placeholder for future holder registration if needed
-        console.log(`[upload] Registering blob ${blobId} holder for topic ${roomId}`);
-      } else {
-        console.warn('[upload] No roomId available, skipping holder registration');
-      }
-      
       onSendBlob?.(blobId, mimeType, contentType);
     } catch (err: any) {
-      console.error('Error sending media:', err);
-      // Could show an error toast here
+      Alert.alert('Media failed', err?.message || 'Could not send media.');
     }
   }
 
-  async function startRecording() {
+  const beginRecording = useCallback(async () => {
+    if (recordingRef.current) return;
+    const filePath = `${RNFS.TemporaryDirectoryPath}/gardens-${Date.now()}.m4a`;
+    recordPathRef.current = filePath;
+    recordStartedAtRef.current = Date.now();
+    recordingRef.current = true;
+    setRecording(true);
+    setRecordingWillCancel(false);
+    setTrayOpen(false);
     try {
-      await audioRecorderPlayer.startRecorder();
-      recordingRef.current = true;
-      setRecording(true);
-    } catch {
-      // Permission denied or mic unavailable — fail silently
+      await audioRecorderPlayer.startRecorder(filePath);
+    } catch (err: any) {
+      recordPathRef.current = null;
+      recordStartedAtRef.current = null;
+      recordingRef.current = false;
+      setRecording(false);
+      setRecordingWillCancel(false);
+      Alert.alert('Voice note failed', err?.message || 'Could not access the microphone.');
     }
+  }, []);
+
+  function handleShellLayout(event: LayoutChangeEvent) {
+    setShellWidth(event.nativeEvent.layout.width);
   }
 
-  async function stopRecording() {
-    setRecording(false);
+  const finishRecording = useCallback(async (cancelled: boolean) => {
     if (!recordingRef.current) return;
+    const startedAt = recordStartedAtRef.current;
+    const path = recordPathRef.current;
+
     recordingRef.current = false;
+    recordPathRef.current = null;
+    recordStartedAtRef.current = null;
+    setRecording(false);
+    setRecordingWillCancel(false);
+
     try {
-      const ok = await isNetworkInitialized();
-      if (!ok) await initNetwork(null);
       const uri = await audioRecorderPlayer.stopRecorder();
-      if (!uri) return;
-      const resp = await fetch(uri);
-      const buf = await resp.arrayBuffer();
-      const bytes = new Uint8Array(buf);
+      if (cancelled || !uri || !path || !startedAt) return;
+      if (Date.now() - startedAt < 350) return;
+      await ensureNetwork();
+      const normalizedPath = path.startsWith('file://') ? path.slice(7) : path;
+      const base64Data = await RNFS.readFile(normalizedPath, 'base64');
+      const bytes = base64ToBytes(base64Data);
       const blobId = await uploadBlob(bytes, 'audio/m4a', roomId);
       onSendAudio?.(blobId);
-    } catch {
-      // silently fail
+    } catch (err: any) {
+      Alert.alert('Voice note failed', err?.message || 'Could not send voice note.');
+    } finally {
+      if (path) {
+        const normalizedPath = path.startsWith('file://') ? path.slice(7) : path;
+        RNFS.unlink(normalizedPath).catch(() => {});
+      }
     }
-  }
+  }, [ensureNetwork, onSendAudio, roomId]);
+
+  const micPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: event =>
+          text.trim().length === 0 && shellWidth > 0 && event.nativeEvent.locationX >= shellWidth - 88,
+        onMoveShouldSetPanResponder: event =>
+          text.trim().length === 0 && shellWidth > 0 && event.nativeEvent.locationX >= shellWidth - 88,
+        onPanResponderGrant: () => {
+          beginRecording().catch(() => {});
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (!recordingRef.current) return;
+          const lift = Math.min(0, gestureState.dy);
+          setRecordingWillCancel(lift <= -RECORD_CANCEL_DISTANCE);
+        },
+        onPanResponderRelease: async (_, gestureState) => {
+          if (!recordingRef.current) return;
+          const shouldCancel = gestureState.dy <= -RECORD_CANCEL_DISTANCE;
+          if (shouldCancel) {
+            await finishRecording(true);
+            return;
+          }
+          await finishRecording(false);
+        },
+        onPanResponderTerminate: () => {
+          finishRecording(true).catch(() => {});
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [beginRecording, finishRecording, shellWidth, text],
+  );
 
   const showPtt = text.trim().length === 0;
   const emojiQueryMatch = text.match(/(^|\s)(:[a-zA-Z0-9_+-]{0,})$/);
@@ -200,48 +297,41 @@ export function MessageComposer({
         const customMatches = customEmojiCodes.filter(code => code.startsWith(emojiQuery));
         const standardMatches = STANDARD_EMOJI_CODES.filter(code => code.startsWith(emojiQuery));
         const seen = new Set<string>();
-        const combined = [...customMatches, ...standardMatches].filter(code => {
-          if (seen.has(code)) return false;
-          seen.add(code);
-          return true;
-        });
-        return combined.slice(0, 6);
+        return [...customMatches, ...standardMatches]
+          .filter(code => {
+            if (seen.has(code)) return false;
+            seen.add(code);
+            return true;
+          })
+          .slice(0, 6);
       })()
     : [];
 
   const mentionQueryMatch = text.match(/(^|\s)@([a-zA-Z0-9_+-]*)$/);
   const mentionQuery = mentionQueryMatch?.[2] ?? '';
   const mentionSuggestions = mentionQueryMatch
-    ? mentionCandidates
-        .filter(name => name.toLowerCase().startsWith(mentionQuery.toLowerCase()))
-        .slice(0, 6)
+    ? mentionCandidates.filter(name => name.toLowerCase().startsWith(mentionQuery.toLowerCase())).slice(0, 6)
     : [];
 
   const channelQueryMatch = text.match(/(^|\s)#([a-zA-Z0-9_+-]*)$/);
   const channelQuery = channelQueryMatch?.[2] ?? '';
   const channelSuggestions = channelQueryMatch
-    ? channelCandidates
-        .filter(name => name.toLowerCase().startsWith(channelQuery.toLowerCase()))
-        .slice(0, 6)
+    ? channelCandidates.filter(name => name.toLowerCase().startsWith(channelQuery.toLowerCase())).slice(0, 6)
     : [];
 
   function applyEmoji(code: string) {
-    const next = text.replace(/(^|\s)(:[a-zA-Z0-9_+-]{0,})$/, `$1${code} `);
-    setText(next);
+    setText(prev => prev.replace(/(^|\s)(:[a-zA-Z0-9_+-]{0,})$/, `$1${code} `));
   }
 
   function applyMention(username: string) {
-    const next = text.replace(/(^|\s)@([a-zA-Z0-9_+-]*)$/, `$1@${username} `);
-    setText(next);
+    setText(prev => prev.replace(/(^|\s)@([a-zA-Z0-9_+-]*)$/, `$1@${username} `));
   }
 
   function applyChannel(name: string) {
-    const next = text.replace(/(^|\s)#([a-zA-Z0-9_+-]*)$/, `$1#${name} `);
-    setText(next);
+    setText(prev => prev.replace(/(^|\s)#([a-zA-Z0-9_+-]*)$/, `$1#${name} `));
   }
 
   function insertEmoji(value: string) {
-    // If user is typing a :code: query, replace that token; otherwise append.
     if (emojiQueryMatch && value.startsWith(':') && value.endsWith(':')) {
       applyEmoji(value);
       return;
@@ -258,43 +348,48 @@ export function MessageComposer({
     });
   }
 
+  const composerBottomPadding = 10 + Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 0);
+  const recordingHint = recordingWillCancel
+    ? 'Release to cancel'
+    : 'Swipe up to cancel • Release to send';
+
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'position'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 12}
     >
       {replyingTo && (
         <View style={styles.replyBar}>
           <Text style={styles.replyText}>Replying to message...</Text>
           {onCancelReply && (
             <TouchableOpacity onPress={onCancelReply}>
-              <X size={16} color="#888" />
+              <X size={16} color="#c8b49f" />
             </TouchableOpacity>
           )}
         </View>
       )}
 
-      {trayOpen && (
-        <View style={styles.tray}>
-          <TouchableOpacity style={styles.trayItem} onPress={() => { setTrayOpen(false); pickMedia(); }}>
-            <View style={[styles.trayIconCircle, { backgroundColor: '#7c3aed' }]}>
-              <Camera size={22} color="#fff" />
-            </View>
-            <Text style={styles.trayLabel}>Photo & Video</Text>
+      {trayOpen && !recording && (
+        <View style={styles.utilityTray}>
+          <TouchableOpacity style={styles.utilityTile} onPress={() => { setTrayOpen(false); pickMedia().catch(() => {}); }}>
+              <View style={[styles.utilityIcon, styles.utilityCamera]}>
+                <Camera size={18} color="#fff" />
+              </View>
+              <Text style={styles.utilityLabel}>Photo & Video</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.trayItem} onPress={() => { setTrayOpen(false); setGifVisible(true); }}>
-            <View style={[styles.trayIconCircle, { backgroundColor: '#0891b2' }]}>
-              <Text style={styles.gifBadge}>GIF</Text>
+          <TouchableOpacity style={styles.utilityTile} onPress={() => { setTrayOpen(false); setGifVisible(true); }}>
+            <View style={[styles.utilityIcon, styles.utilityGif]}>
+              <Text style={styles.utilityGifText}>GIF</Text>
             </View>
-            <Text style={styles.trayLabel}>GIF</Text>
+            <Text style={styles.utilityLabel}>GIF</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {emojiSuggestions.length > 0 && (
-        <View style={styles.emojiSuggestRow}>
+        <View style={styles.suggestionRow}>
           {emojiSuggestions.map(code => (
-            <TouchableOpacity key={code} style={styles.emojiSuggestBtn} onPress={() => applyEmoji(code)}>
+            <TouchableOpacity key={code} style={styles.suggestionChip} onPress={() => applyEmoji(code)}>
               {customEmojis[code] ? (
                 <>
                   <BlobImage
@@ -303,10 +398,10 @@ export function MessageComposer({
                     roomId={customEmojis[code].roomId}
                     style={styles.customEmojiPreview}
                   />
-                  <Text style={styles.emojiSuggestText}>{code}</Text>
+                  <Text style={styles.suggestionText}>{code}</Text>
                 </>
               ) : (
-                <Text style={styles.emojiSuggestText}>
+                <Text style={styles.suggestionText}>
                   {STANDARD_EMOJI_BY_CODE[code] ? `${STANDARD_EMOJI_BY_CODE[code]} ${code}` : code}
                 </Text>
               )}
@@ -316,67 +411,99 @@ export function MessageComposer({
       )}
 
       {mentionSuggestions.length > 0 && (
-        <View style={styles.emojiSuggestRow}>
+        <View style={styles.suggestionRow}>
           {mentionSuggestions.map(name => (
-            <TouchableOpacity key={name} style={styles.emojiSuggestBtn} onPress={() => applyMention(name)}>
-              <Text style={styles.emojiSuggestText}>@{name}</Text>
+            <TouchableOpacity key={name} style={styles.suggestionChip} onPress={() => applyMention(name)}>
+              <Text style={styles.suggestionText}>@{name}</Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
       {channelSuggestions.length > 0 && (
-        <View style={styles.emojiSuggestRow}>
+        <View style={styles.suggestionRow}>
           {channelSuggestions.map(name => (
-            <TouchableOpacity key={name} style={styles.emojiSuggestBtn} onPress={() => applyChannel(name)}>
-              <Text style={styles.emojiSuggestText}>#{name}</Text>
+            <TouchableOpacity key={name} style={styles.suggestionChip} onPress={() => applyChannel(name)}>
+              <Text style={styles.suggestionText}>#{name}</Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      <View style={[styles.container, { paddingBottom: 12 + insets.bottom }]}>
-        <TouchableOpacity style={[styles.attachBtn, trayOpen && styles.attachBtnActive]} onPress={() => setTrayOpen(o => !o)}>
-          <Text style={styles.attachText}>{trayOpen ? '×' : '+'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.emojiBtn} onPress={openEmojiPicker}>
-          <Smile size={18} color="#9ca3af" />
-        </TouchableOpacity>
-
-        <TextInput
-          style={styles.input}
-          placeholder={placeholder}
-          placeholderTextColor="#555"
-          value={text}
-          onChangeText={setText}
-          multiline
-          maxLength={4000}
-          returnKeyType="default"
-        />
-
-        {showPtt ? (
-          <TouchableOpacity
-            style={[styles.pttBtn, recording && styles.pttBtnActive]}
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
-          >
-            <Mic size={18} color={recording ? '#fff' : '#888'} />
-          </TouchableOpacity>
+      <View
+        style={[styles.shell, { paddingBottom: composerBottomPadding }]}
+        onLayout={handleShellLayout}
+        {...(showPtt || recording ? micPanResponder.panHandlers : {})}
+      >
+        {recording ? (
+          <View style={styles.recordingBar}>
+            <View style={styles.recordingStatus}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingTime}>{formatElapsed(recordingElapsedMs)}</Text>
+            </View>
+            <View style={styles.recordingBody}>
+              <Text style={styles.recordingHint}>{recordingHint}</Text>
+            </View>
+          </View>
         ) : (
-          <TouchableOpacity
-            style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
-            onPress={handleSend}
-            disabled={!text.trim()}
-          >
-            <SendHorizontal size={18} color="#fff" />
-          </TouchableOpacity>
+          <View style={styles.composerRow}>
+            <TouchableOpacity style={[styles.circleBtn, trayOpen && styles.circleBtnActive]} onPress={() => setTrayOpen(v => !v)}>
+              <Text style={styles.plusText}>{trayOpen ? '×' : '+'}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.inputShell}>
+              <TouchableOpacity style={styles.inputIconBtn} onPress={openEmojiPicker}>
+                <Smile size={18} color="#dbc3a8" />
+              </TouchableOpacity>
+              <Animated.View style={[styles.inputWrap, { minHeight: inputHeight }]}>
+                <TextInput
+                  style={styles.input}
+                  placeholder={placeholder}
+                  placeholderTextColor="#8d7763"
+                  value={text}
+                  onChangeText={setText}
+                  onContentSizeChange={handleContentSizeChange}
+                  multiline
+                  maxLength={4000}
+                  returnKeyType="default"
+                  scrollEnabled
+                />
+              </Animated.View>
+            </View>
+
+            {showPtt ? (
+              <View>
+                <View style={[styles.micBtn, recording && styles.micBtnActive]}>
+                  <Mic size={18} color="#2e2014" />
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+                <SendHorizontal size={18} color="#2e2014" />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+        
+        {/* Muted overlay - blocks input when user is muted */}
+        {isMuted && (
+          <View style={styles.mutedOverlay}>
+            <VolumeX size={18} color="#f59e0b" />
+            <Text style={styles.mutedText}>
+              {mutedUntil 
+                ? `Muted until ${new Date(mutedUntil / 1000).toLocaleTimeString()}`
+                : 'You are muted'}
+            </Text>
+          </View>
         )}
       </View>
 
       <GifSearchModal
         visible={gifVisible}
-        onSelect={(url) => { onSendGif?.(url); setGifVisible(false); }}
+        onSelect={(url) => {
+          onSendGif?.(url);
+          setGifVisible(false);
+        }}
         onClose={() => setGifVisible(false)}
       />
     </KeyboardAvoidingView>
@@ -384,110 +511,175 @@ export function MessageComposer({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingTop: 12,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    backgroundColor: '#0a0a0a',
+  shell: {
+    backgroundColor: '#17130f',
     borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
-    gap: 8,
+    borderTopColor: '#2f261e',
+    paddingHorizontal: 12,
+    paddingTop: 10,
   },
   replyBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1d1711',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderTopWidth: 1,
-    borderTopColor: '#374151',
+    borderTopColor: '#33281f',
   },
-  replyText: { color: '#888', fontSize: 13 },
-  cancelText: { color: '#888', fontSize: 18, paddingHorizontal: 8 },
-  tray: {
+  replyText: { color: '#c8b49f', fontSize: 13, fontWeight: '500' },
+  utilityTray: {
     flexDirection: 'row',
-    gap: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#111',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#1a140f',
     borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
+    borderTopColor: '#2f261e',
   },
-  emojiSuggestRow: {
+  utilityTile: { alignItems: 'center', gap: 8 },
+  utilityIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  utilityCamera: { backgroundColor: '#b89269' },
+  utilityGif: { backgroundColor: '#8f6f51' },
+  utilityGifText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  utilityLabel: { color: '#c8b49f', fontSize: 12, fontWeight: '600' },
+  suggestionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 6,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#17130f',
     borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
+    borderTopColor: '#2f261e',
   },
-  emojiSuggestBtn: {
-    backgroundColor: '#1b1b1b',
-    borderRadius: 12,
+  suggestionChip: {
+    backgroundColor: '#2a2119',
+    borderRadius: 16,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  emojiSuggestText: { color: '#e5e7eb', fontSize: 12, fontWeight: '600' },
+  suggestionText: { color: '#f2e8dc', fontSize: 12, fontWeight: '600' },
   customEmojiPreview: { width: 16, height: 16, borderRadius: 4 },
-  trayItem: {
-    alignItems: 'center',
-    gap: 8,
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
   },
-  trayIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  circleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#2a2119',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 2,
   },
-  gifBadge: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+  circleBtnActive: { backgroundColor: '#3a2d21' },
+  plusText: { color: '#f1dfca', fontSize: 24, lineHeight: 24, fontWeight: '300' },
+  inputShell: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: '#251d16',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
-  trayLabel: { color: '#888', fontSize: 12 },
-  attachBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center',
-  },
-  attachBtnActive: { backgroundColor: '#2a2a2a' },
-  attachText: { color: '#888', fontSize: 24, fontWeight: '300' },
-  emojiBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#1a1a1a',
+  inputIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 1,
+  },
+  inputWrap: {
+    flex: 1,
     justifyContent: 'center',
   },
   input: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    color: '#fff',
-    fontSize: 15,
-    maxHeight: 100,
+    color: '#f5ede4',
+    fontSize: 16,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 8,
+    maxHeight: INPUT_MAX_HEIGHT,
   },
+  micBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#d7b28d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
+  },
+  micBtnActive: { backgroundColor: '#bf5b4a' },
   sendBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#f97316', alignItems: 'center', justifyContent: 'center',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#d7b28d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
-  sendBtnDisabled: { backgroundColor: '#374151', opacity: 0.5 },
-  pttBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center',
+  mutedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(23, 19, 15, 0.92)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 22,
+    margin: 4,
   },
-  pttBtnActive: { backgroundColor: '#ef4444' },
+  mutedText: {
+    color: '#f59e0b',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  recordingBar: {
+    minHeight: 52,
+    borderRadius: 26,
+    backgroundColor: '#251d16',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  recordingStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 66,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#bf5b4a',
+  },
+  recordingTime: {
+    color: '#f5ede4',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  recordingBody: { flex: 1 },
+  recordingHint: { color: '#c8b49f', fontSize: 13, fontWeight: '500' },
 });

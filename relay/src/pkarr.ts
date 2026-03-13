@@ -70,7 +70,7 @@ function encodeSigData(timestamp: number, packetBytes: Uint8Array): Uint8Array {
  * Sign and publish a relay self-record to pkarr via HTTP relay.
  *
  * @param seedHex  - 64 hex char Ed25519 seed for this relay's keypair
- * @param selfUrl  - Base URL of this Worker (e.g. https://relay.gardens.app), without trailing slash
+ * @param selfUrl  - Base URL of this Worker (e.g. https://relay.usegardens.com), without trailing slash
  */
 export async function publishRelaySelf(
   seedHex: string,

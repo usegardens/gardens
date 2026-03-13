@@ -43,3 +43,18 @@ export async function markProfileSent(threadId: string): Promise<void> {
     await AsyncStorage.setItem(PROFILE_SENT_PREFIX + threadId, 'true');
   } catch {}
 }
+
+export async function hasProfilePayloadBeenSent(threadId: string, payload: string): Promise<boolean> {
+  try {
+    const val = await AsyncStorage.getItem(PROFILE_SENT_PREFIX + threadId);
+    return val === payload;
+  } catch {
+    return false;
+  }
+}
+
+export async function markProfilePayloadSent(threadId: string, payload: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PROFILE_SENT_PREFIX + threadId, payload);
+  } catch {}
+}

@@ -13,8 +13,10 @@ import ActionSheet, { SheetManager, SheetProps } from 'react-native-actions-shee
 import { X, Download, FileText, Users, MessageSquare, Database } from 'lucide-react-native';
 import { useProfileStore } from '../stores/useProfileStore';
 import { listMyOrgs } from '../ffi/gardensCore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export function ExportDataSheet(props: SheetProps<'export-data-sheet'>) {
+  const insets = useSafeAreaInsets();
   const { myProfile } = useProfileStore();
   const [exporting, setExporting] = useState(false);
   const [includeOrgs, setIncludeOrgs] = useState(true);
@@ -115,7 +117,8 @@ export function ExportDataSheet(props: SheetProps<'export-data-sheet'>) {
     <ActionSheet
       id={props.sheetId}
       gestureEnabled
-      containerStyle={s.container}
+      useBottomSafeAreaPadding
+      containerStyle={[s.container, { paddingBottom: insets.bottom + 24 }]}
       indicatorStyle={s.handle}
     >
       {/* Header */}

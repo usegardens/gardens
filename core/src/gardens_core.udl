@@ -42,21 +42,21 @@ namespace gardens_core {
     [Throws=CoreError]
     void delete_org(string org_id);
 
-    // Member moderation (stubs)
+    // Member moderation
     [Throws=AuthError]
-    void kick_member(string org_id, string member_public_key);
+    SendResult kick_member(string org_id, string member_public_key);
 
     [Throws=AuthError]
-    void ban_member(string org_id, string member_public_key);
+    SendResult ban_member(string org_id, string member_public_key);
 
     [Throws=AuthError]
-    void unban_member(string org_id, string member_public_key);
+    SendResult unban_member(string org_id, string member_public_key);
 
     [Throws=AuthError]
-    void mute_member(string org_id, string member_public_key, i64 duration_seconds);
+    SendResult mute_member(string org_id, string member_public_key, i64 duration_seconds);
 
     [Throws=AuthError]
-    void unmute_member(string org_id, string member_public_key);
+    SendResult unmute_member(string org_id, string member_public_key);
 
     // ── Phase 2: Rooms ─────────────────────────────────────────────────────
     [Throws=CoreError]
@@ -158,6 +158,13 @@ namespace gardens_core {
     sequence<DmThread> list_dm_threads();
 
     [Throws=CoreError]
+    SendResult create_org_admin_thread(string org_id, string admin_key);
+
+    sequence<OrgAdminThread> list_org_admin_threads(string org_id);
+
+    sequence<OrgAdminThread> list_my_org_admin_threads();
+
+    [Throws=CoreError]
     SendResult delete_conversation(string thread_id);
 
     [Throws=CoreError]
@@ -213,7 +220,10 @@ namespace gardens_core {
     SendResult claim_invite_token(string token_base64);
 
     [Throws=AuthError]
-    void remove_member_from_org(
+    SendResult join_public_org(string org_id, string org_pubkey_z32, string join_sig_b64);
+
+    [Throws=AuthError]
+    SendResult remove_member_from_org(
         string org_id,
         string member_public_key
     );
@@ -226,6 +236,9 @@ namespace gardens_core {
     );
 
     sequence<MemberInfo> list_org_members(string org_id);
+    sequence<AuditLogEntry> list_audit_log(string org_id, u32 limit);
+    boolean is_muted(string org_id, string member_key);
+    i64 get_mute_expiration(string org_id, string member_key);
     [Throws=AuthError]
     void set_user_cooldown(string org_id, string member_public_key, i64 cooldown_secs);
     [Throws=AuthError]
@@ -359,6 +372,8 @@ dictionary PkarrResolved {
     string? cover_blob_id;
     string public_key;
     boolean email;
+    string? org_id;
+    string? join_sig;
 };
 
 dictionary OrgSummary {
@@ -447,6 +462,17 @@ dictionary DmThread {
     boolean is_request;
 };
 
+dictionary OrgAdminThread {
+    string thread_id;
+    string org_id;
+    string initiator_key;
+    string participant_key;
+    string admin_key;
+    i64 created_at;
+    i64? last_message_at;
+    boolean is_request;
+};
+
 /// Returned by send_message and create_dm_thread.
 /// op_bytes is the GossipEnvelope CBOR — the app forwards it via onion routing.
 dictionary SendResult {
@@ -483,6 +509,16 @@ dictionary MemberInfo {
     string public_key;
     string access_level;
     i64 joined_at;
+};
+
+dictionary AuditLogEntry {
+    i64 id;
+    string org_id;
+    string moderator_key;
+    string target_key;
+    string action_type;
+    string? details;
+    i64 created_at;
 };
 
 // ── Phase 7 types ─────────────────────────────────────────────────────────────

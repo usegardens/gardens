@@ -5,14 +5,24 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import ActionSheet, { SheetManager } from 'react-native-actions-sheet';
+import { ShieldAlert, Volume2 } from 'lucide-react-native';
 import type { MemberInfo } from '../ffi/gardensCore';
-import { getProfile, changeMemberPermission, removeMemberFromOrg, setUserCooldown, iceMember, uniceMember, ignoreUser, unignoreUser, listIgnoredUsers } from '../ffi/gardensCore';
+import { getProfile, changeMemberPermission, ignoreUser, unignoreUser, listIgnoredUsers, muteMember, unmuteMember } from '../ffi/gardensCore';
 import { BlobImage } from '../components/BlobImage';
+import { broadcastOp, deriveInboxTopicHex } from '../stores/useSyncStore';
 
 const ACCESS_LEVELS = ['Pull', 'Read', 'Write', 'Manage'] as const;
 type AccessLevel = typeof ACCESS_LEVELS[number];
+
+const MUTE_DURATIONS = [
+  { label: '1 hour', seconds: 3600 },
+  { label: '6 hours', seconds: 21600 },
+  { label: '1 day', seconds: 86400 },
+  { label: '1 week', seconds: 604800 },
+];
 
 interface MemberActionsSheetProps {
   sheetId: string;
@@ -68,50 +78,45 @@ export function MemberActionsSheet(props: MemberActionsSheetProps) {
     }
   }
 
-  async function handleRemoveMember() {
+  // Broadcast moderation op to both org topic and target's inbox
+  async function broadcastModerationOp(result: { id: string; opBytes: Uint8Array }, targetKey: string) {
+    if (!result.opBytes?.length || !orgId) return;
+    
+    // Broadcast to org topic so all members see it
+    broadcastOp(orgId, result.opBytes);
+    
+    // Broadcast to target's inbox so they get notified even if removed
+    const targetInboxTopic = deriveInboxTopicHex(targetKey);
+    broadcastOp(targetInboxTopic, result.opBytes);
+  }
+
+  async function handleMute(durationSeconds: number) {
+    if (!member) return;
+    
     setActionLoading(true);
     try {
-      await removeMemberFromOrg(orgId!, member!.publicKey);
+      const result = await muteMember(orgId!, member.publicKey, durationSeconds);
+      await broadcastModerationOp(result, member.publicKey);
       onAction?.();
       SheetManager.hide('member-actions-sheet');
-    } catch {
-      // Error handled by caller
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to mute member');
     } finally {
       setActionLoading(false);
     }
   }
 
-  async function handleSetUserCooldown(secs: number) {
+  async function handleUnmute() {
+    if (!member) return;
+    
     setActionLoading(true);
     try {
-      await setUserCooldown(orgId!, member!.publicKey, secs);
+      const result = await unmuteMember(orgId!, member.publicKey);
+      await broadcastModerationOp(result, member.publicKey);
       onAction?.();
       SheetManager.hide('member-actions-sheet');
-    } catch {
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  async function handleIce(secs: number) {
-    setActionLoading(true);
-    try {
-      await iceMember(orgId!, member!.publicKey, secs);
-      onAction?.();
-      SheetManager.hide('member-actions-sheet');
-    } catch {
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  async function handleUnice() {
-    setActionLoading(true);
-    try {
-      await uniceMember(orgId!, member!.publicKey);
-      onAction?.();
-      SheetManager.hide('member-actions-sheet');
-    } catch {
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to unmute member');
     } finally {
       setActionLoading(false);
     }
@@ -136,7 +141,7 @@ export function MemberActionsSheet(props: MemberActionsSheetProps) {
 
   if (!member) {
     return (
-      <ActionSheet id={props.sheetId} containerStyle={styles.sheet}>
+      <ActionSheet id={props.sheetId} useBottomSafeAreaPadding containerStyle={styles.sheet}>
         <View style={styles.center}>
           <ActivityIndicator color="#fff" />
         </View>
@@ -158,7 +163,7 @@ export function MemberActionsSheet(props: MemberActionsSheetProps) {
   };
 
   return (
-    <ActionSheet id={props.sheetId} containerStyle={styles.sheet}>
+    <ActionSheet id={props.sheetId} useBottomSafeAreaPadding containerStyle={styles.sheet}>
       <View style={styles.container}>
         {/* Header with member info */}
         <View style={styles.header}>
@@ -218,57 +223,44 @@ export function MemberActionsSheet(props: MemberActionsSheetProps) {
           </View>
         </View>
 
-        {/* Danger Zone */}
+        {/* Moderation */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Cooldowns & Ice</Text>
-          <View style={styles.levelGrid}>
-            {[10, 30, 60].map((secs) => (
-              <TouchableOpacity
-                key={`cd-${secs}`}
-                style={styles.levelBtn}
-                onPress={() => handleSetUserCooldown(secs)}
-                disabled={actionLoading}
-              >
-                <Text style={styles.levelBtnText}>{secs}s Slow</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.levelBtn}
-              onPress={() => handleSetUserCooldown(0)}
-              disabled={actionLoading}
-            >
-              <Text style={styles.levelBtnText}>Clear Slow</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={[styles.levelGrid, { marginTop: 8 }]}>
-            {[3600, 21600, 86400].map((secs) => (
-              <TouchableOpacity
-                key={`ice-${secs}`}
-                style={styles.levelBtn}
-                onPress={() => handleIce(secs)}
-                disabled={actionLoading}
-              >
-                <Text style={styles.levelBtnText}>
-                  Ice {secs === 3600 ? '1h' : secs === 21600 ? '6h' : '24h'}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.levelBtn}
-              onPress={handleUnice}
-              disabled={actionLoading}
-            >
-              <Text style={styles.levelBtnText}>Unice</Text>
-            </TouchableOpacity>
-          </View>
-
+          <Text style={styles.sectionTitle}>Moderation</Text>
           <TouchableOpacity
-            style={styles.dangerBtn}
-            onPress={handleRemoveMember}
+            style={styles.moderationBtn}
+            onPress={() => {
+              SheetManager.hide('member-actions-sheet');
+              setTimeout(() => {
+                SheetManager.show('member-moderation-sheet', {
+                  payload: { member, orgId, onAction },
+                });
+              }, 300);
+            }}
+          >
+            <ShieldAlert size={18} color="#f59e0b" style={{ marginRight: 8 }} />
+            <Text style={styles.moderationBtnText}>Kick, Ban, or Mute</Text>
+          </TouchableOpacity>
+
+          {/* Quick Mute/Unmute buttons */}
+          <View style={[styles.levelGrid, { marginTop: 12 }]}>
+            {MUTE_DURATIONS.map(({ label, seconds }) => (
+              <TouchableOpacity
+                key={`mute-${seconds}`}
+                style={styles.levelBtn}
+                onPress={() => handleMute(seconds)}
+                disabled={actionLoading}
+              >
+                <Text style={styles.levelBtnText}>Mute {label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={[styles.levelBtn, { marginTop: 8 }]}
+            onPress={handleUnmute}
             disabled={actionLoading}
           >
-            <Text style={styles.dangerBtnText}>Remove Member</Text>
+            <Volume2 size={16} color="#3b82f6" style={{ marginRight: 6 }} />
+            <Text style={styles.levelBtnText}>Unmute</Text>
           </TouchableOpacity>
         </View>
 
@@ -409,19 +401,6 @@ const styles = StyleSheet.create({
   levelBtnTextActive: {
     color: '#fff',
   },
-  dangerBtn: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ef4444',
-  },
-  dangerBtnText: {
-    color: '#ef4444',
-    fontSize: 15,
-    fontWeight: '600',
-  },
   cancelBtn: {
     backgroundColor: '#222',
     borderRadius: 10,
@@ -486,6 +465,21 @@ const styles = StyleSheet.create({
   },
   ignoreActiveBtnText: {
     color: '#3b82f6',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  moderationBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+  },
+  moderationBtnText: {
+    color: '#f59e0b',
     fontSize: 15,
     fontWeight: '600',
   },

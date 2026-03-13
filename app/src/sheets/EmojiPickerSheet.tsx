@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, FlatList } from 'react-native';
 import ActionSheet, { SheetManager } from 'react-native-actions-sheet';
 import { BlobImage } from '../components/BlobImage';
 import { STANDARD_EMOJI } from '../data/emoji';
@@ -33,13 +33,21 @@ export function EmojiPickerSheet(props: EmojiPickerSheetProps) {
     return STANDARD_EMOJI.filter(item => item.code.toLowerCase().includes(q));
   }, [query]);
 
+  const items = useMemo(
+    () => [
+      ...filteredCustom.map(item => ({ key: item.code, type: 'custom' as const, code: item.code, data: item.data })),
+      ...filteredStandard.map(item => ({ key: item.code, type: 'standard' as const, emoji: item.emoji })),
+    ],
+    [filteredCustom, filteredStandard],
+  );
+
   function selectEmoji(value: string) {
     SheetManager.hide(props.sheetId);
     onSelect?.(value);
   }
 
   return (
-    <ActionSheet id={props.sheetId} containerStyle={styles.sheet} gestureEnabled>
+    <ActionSheet id={props.sheetId} containerStyle={styles.sheet} gestureEnabled useBottomSafeAreaPadding>
       <View style={styles.header}>
         <Text style={styles.title}>Pick an emoji</Text>
         <TextInput
@@ -51,31 +59,32 @@ export function EmojiPickerSheet(props: EmojiPickerSheetProps) {
           autoCapitalize="none"
         />
       </View>
-      <ScrollView contentContainerStyle={styles.grid}>
-        {filteredCustom.map(item => (
+      <FlatList
+        data={items}
+        keyExtractor={item => item.key}
+        numColumns={7}
+        style={styles.list}
+        columnWrapperStyle={styles.row}
+        contentContainerStyle={styles.grid}
+        nestedScrollEnabled
+        renderItem={({ item }) => (
           <TouchableOpacity
-            key={item.code}
             style={styles.emojiBtn}
-            onPress={() => selectEmoji(item.code)}
+            onPress={() => selectEmoji(item.type === 'custom' ? item.code : item.emoji)}
           >
-            <BlobImage
-              blobHash={item.data.blobId}
-              mimeType={item.data.mimeType}
-              roomId={item.data.roomId}
-              style={styles.customEmojiImg}
-            />
+            {item.type === 'custom' ? (
+              <BlobImage
+                blobHash={item.data.blobId}
+                mimeType={item.data.mimeType}
+                roomId={item.data.roomId}
+                style={styles.customEmojiImg}
+              />
+            ) : (
+              <Text style={styles.emojiText}>{item.emoji}</Text>
+            )}
           </TouchableOpacity>
-        ))}
-        {filteredStandard.map(item => (
-          <TouchableOpacity
-            key={item.code}
-            style={styles.emojiBtn}
-            onPress={() => selectEmoji(item.emoji)}
-          >
-            <Text style={styles.emojiText}>{item.emoji}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+        )}
+      />
     </ActionSheet>
   );
 }
@@ -86,6 +95,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingBottom: 12,
+    maxHeight: '78%',
   },
   header: {
     paddingHorizontal: 16,
@@ -104,14 +114,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 16,
-  },
+  list: { flexGrow: 0 },
+  row: { justifyContent: 'flex-start', gap: 8, paddingHorizontal: 12 },
+  grid: { paddingTop: 12, paddingBottom: 16, gap: 8 },
   emojiBtn: {
     width: 40,
     height: 40,
@@ -123,4 +128,3 @@ const styles = StyleSheet.create({
   emojiText: { fontSize: 20 },
   customEmojiImg: { width: 22, height: 22, borderRadius: 4 },
 });
-

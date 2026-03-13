@@ -83,22 +83,34 @@ export const useMessagesStore = create<MessagesState>((set) => ({
           });
           // Hydrate in-memory profile cache immediately
           useProfileStore.setState(s => {
-            if (s.profileCache[pm.authorKey]) return s; // don't overwrite authoritative data
-            return {
-              profileCache: {
-                ...s.profileCache,
-                [pm.authorKey]: {
-                  publicKey: pm.authorKey,
-                  username: data.username!,
-                  avatarBlobId: data.avatarBlobId ?? null,
-                  bio: null,
-                  availableFor: [],
-                  isPublic: false,
-                  createdAt: pm.timestamp,
-                  updatedAt: pm.timestamp,
+            const existing = s.profileCache[pm.authorKey];
+            if (!existing) {
+              return {
+                profileCache: {
+                  ...s.profileCache,
+                  [pm.authorKey]: {
+                    publicKey: pm.authorKey,
+                    username: data.username!,
+                    avatarBlobId: data.avatarBlobId ?? null,
+                    bio: null,
+                    availableFor: [],
+                    isPublic: false,
+                    createdAt: pm.timestamp,
+                    updatedAt: pm.timestamp,
+                  },
                 },
-              },
-            };
+              };
+            }
+            // Existing entry: patch in avatarBlobId if the DM profile provides one we're missing
+            if (data.avatarBlobId && !existing.avatarBlobId) {
+              return {
+                profileCache: {
+                  ...s.profileCache,
+                  [pm.authorKey]: { ...existing, avatarBlobId: data.avatarBlobId },
+                },
+              };
+            }
+            return s;
           });
         }
       } catch {
@@ -143,7 +155,21 @@ export const useMessagesStore = create<MessagesState>((set) => ({
   },
 
   async deleteMessage(messageId, orgId) {
-    await nativeDeleteMessage(messageId, orgId);
+    const result = await nativeDeleteMessage(messageId, orgId);
+
+    const topic = (() => {
+      for (const msgs of Object.values(useMessagesStore.getState().messages)) {
+        const found = msgs.find(m => m.messageId === messageId);
+        if (found?.roomId) return found.roomId;
+        if (found?.dmThreadId) return found.dmThreadId;
+      }
+      return orgId ?? null;
+    })();
+
+    if (topic && result.opBytes?.length) {
+      broadcastOp(topic, result.opBytes);
+    }
+
     // Optimistically update local state
     set(s => {
       const updatedMessages: Record<string, Message[]> = {};

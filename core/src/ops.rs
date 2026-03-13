@@ -39,6 +39,7 @@ pub mod log_ids {
     pub const MESSAGE: &str = "message";
     pub const REACTION: &str = "reaction";
     pub const DM_THREAD: &str = "dm_thread";
+    pub const ORG_ADMIN_THREAD: &str = "org_admin_thread";
     pub const EVENT: &str = "event";
     pub const EVENT_RSVP: &str = "event_rsvp";
 
@@ -51,7 +52,7 @@ pub mod log_ids {
     pub const MEMBERSHIP: &str = "membership";
 
     pub const ALL: &[&str] = &[
-        PROFILE, ORG, ROOM, MESSAGE, REACTION, DM_THREAD, EVENT, EVENT_RSVP,
+        PROFILE, ORG, ROOM, MESSAGE, REACTION, DM_THREAD, ORG_ADMIN_THREAD, EVENT, EVENT_RSVP,
         KEY_BUNDLE, ENC_CTRL, ENC_DIRECT, MEMBERSHIP,
     ];
 }
@@ -191,6 +192,13 @@ pub struct DmThreadOp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct OrgAdminThreadOp {
+    pub op_type: String, // "create_thread"
+    pub org_id: String,
+    pub admin_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DeleteConversationOp {
     pub op_type: String, // "delete_conversation"
     pub thread_id: String,
@@ -219,11 +227,12 @@ pub struct EncDirectOp {
 // Phase 5 membership op payloads
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MembershipOp {
-    pub op_type: String,      // "add_member" | "remove_member" | "change_permission"
+    pub op_type: String,      // "add_member" | "remove_member" | "change_permission" | "kick_member" | "ban_member" | "unban_member" | "mute_member" | "unmute_member"
     pub org_id: String,       // organization ID
-    pub member_key: String,   // hex public key of the member
+    pub member_key: String,   // hex public key of the target member
+    pub moderator_key: String, // hex public key of who performed the action (for audit trail)
     pub access_level: Option<String>, // "pull" | "read" | "write" | "manage" (for add/change)
-    pub cooldown_secs: Option<i64>,
+    pub cooldown_secs: Option<i64>,   // For mute: duration in seconds
     pub iced_until: Option<i64>,
 }
 

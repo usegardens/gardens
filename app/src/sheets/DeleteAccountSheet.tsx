@@ -14,14 +14,18 @@ import { X, AlertTriangle, Trash2 } from 'lucide-react-native';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import * as Keychain from 'react-native-keychain';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const KEYCHAIN_SERVICE = 'gardens.privateKey';
 const PUBKEY_SERVICE = 'gardens.publicKey';
 const MNEMONIC_SERVICE = 'gardens.mnemonic';
+const PROFILE_PIC_SERVICE = 'gardens.profilePicUri';
+const LOCAL_USERNAME_SERVICE = 'gardens.localUsername';
 
 export function DeleteAccountSheet(props: SheetProps<'delete-account-sheet'>) {
-  const { lock } = useAuthStore();
-  const { myProfile, localUsername } = useProfileStore();
+  const insets = useSafeAreaInsets();
+  const { clearAccountState } = useAuthStore();
+  const { myProfile, localUsername, setProfilePicUri } = useProfileStore();
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [step, setStep] = useState(1);
@@ -47,9 +51,14 @@ export function DeleteAccountSheet(props: SheetProps<'delete-account-sheet'>) {
       await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
       await Keychain.resetGenericPassword({ service: PUBKEY_SERVICE });
       await Keychain.resetGenericPassword({ service: MNEMONIC_SERVICE });
-      
-      // Lock the session
-      lock();
+      await Keychain.resetGenericPassword({ service: PROFILE_PIC_SERVICE });
+      await Keychain.resetGenericPassword({ service: LOCAL_USERNAME_SERVICE });
+
+      // Clear profile/auth state so app returns to Welcome flow.
+      await setProfilePicUri(null);
+      useProfileStore.setState({ myProfile: null, profileCache: {}, localUsername: null, profilePicUri: null });
+      await clearAccountState();
+      SheetManager.hide('delete-account-sheet');
 
       Alert.alert(
         'Account Deleted',
@@ -57,9 +66,7 @@ export function DeleteAccountSheet(props: SheetProps<'delete-account-sheet'>) {
         [
           {
             text: 'OK',
-            onPress: () => {
-              SheetManager.hide('delete-account-sheet');
-            },
+            onPress: () => {},
           },
         ]
       );
@@ -78,6 +85,7 @@ export function DeleteAccountSheet(props: SheetProps<'delete-account-sheet'>) {
     <ActionSheet
       id={props.sheetId}
       gestureEnabled
+      useBottomSafeAreaPadding
       containerStyle={s.container}
       indicatorStyle={s.handle}
     >
@@ -90,7 +98,11 @@ export function DeleteAccountSheet(props: SheetProps<'delete-account-sheet'>) {
         <View style={s.headerSpacer} />
       </View>
 
-      <ScrollView style={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.content}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 28 }}
+        showsVerticalScrollIndicator={false}
+      >
         {step === 1 ? (
           <>
             {/* Warning icon */}

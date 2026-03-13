@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { Shield } from 'lucide-react-native';
 import type { Message } from '../stores/useMessagesStore';
 import { BlobImage } from './BlobImage';
 import { DEFAULT_RELAY_URL } from '../stores/useProfileStore';
@@ -8,7 +9,6 @@ import { getBlob } from '../ffi/gardensCore';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import { MessageText, extractUrls } from './MessageText';
 import { LinkPreview } from './LinkPreview';
-import { Mail } from 'lucide-react-native';
 
 const AVATAR_COLORS = ['#5865F2', '#57F287', '#FEE75C', '#EB459E', '#ED4245', '#3498DB', '#E67E22'];
 
@@ -24,17 +24,31 @@ function Avatar({
   authorKey,
   username,
   avatarBlobId,
+  avatarRoomId,
+  showShield,
   avatarUri,
   isIced,
 }: {
   authorKey: string;
   username: string;
   avatarBlobId: string | null;
+  avatarRoomId?: string | null;
+  showShield?: boolean;
   avatarUri?: string | null;
   isIced?: boolean;
 }) {
   const color = avatarColor(authorKey);
   const initials = username.slice(0, 2).toUpperCase();
+
+  if (showShield) {
+    return (
+      <View style={styles.avatarWrap}>
+        <View style={styles.shieldAvatar}>
+          <Shield size={16} color="#3a2817" />
+        </View>
+      </View>
+    );
+  }
 
   if (avatarUri) {
     return (
@@ -50,7 +64,7 @@ function Avatar({
       <View style={styles.avatarWrap}>
         <BlobImage
           blobHash={avatarBlobId}
-          roomId={null}
+          roomId={avatarRoomId ?? null}
           peerPublicKey={authorKey}
           publicRelayUrl={DEFAULT_RELAY_URL}
           style={[styles.avatar, { borderRadius: 18 }]}
@@ -113,6 +127,8 @@ interface Props {
   isGrouped: boolean;
   authorUsername: string;
   authorAvatarBlobId: string | null;
+  authorAvatarRoomId?: string | null;
+  authorShield?: boolean;
   authorAvatarUri?: string | null;
   authorIced?: boolean;
   replyToPreview?: { username: string; text: string; isDeleted?: boolean } | null;
@@ -129,6 +145,8 @@ export function ChannelMessage({
   isGrouped,
   authorUsername,
   authorAvatarBlobId,
+  authorAvatarRoomId,
+  authorShield,
   authorAvatarUri,
   authorIced,
   replyToPreview,
@@ -166,6 +184,8 @@ export function ChannelMessage({
             authorKey={message.authorKey}
             username={authorUsername}
             avatarBlobId={authorAvatarBlobId}
+            avatarRoomId={authorAvatarRoomId}
+            showShield={authorShield}
             avatarUri={authorAvatarUri}
             isIced={authorIced}
           />
@@ -212,29 +232,17 @@ export function ChannelMessage({
           );
         })()}
 
-        {message.contentType === 'email' && (() => {
-          let emailData: { from?: string; subject?: string; body_text?: string } = {};
-          try {
-            emailData = JSON.parse(message.textContent ?? '{}');
-          } catch {}
-          return (
-            <View style={emailStyles.card}>
-              <View style={emailStyles.header}>
-                <Mail size={14} color="#888" />
-                <Text style={emailStyles.from}>{emailData.from ?? 'Unknown sender'}</Text>
-              </View>
-              <Text style={emailStyles.subject}>{emailData.subject ?? '(no subject)'}</Text>
-              <Text style={emailStyles.preview} numberOfLines={2}>{emailData.body_text ?? ''}</Text>
-            </View>
-          );
-        })()}
-
         {message.contentType === 'image' && message.blobId && (
-          <BlobImage blobHash={message.blobId} roomId={message.roomId ?? null} style={styles.media} />
+          <BlobImage
+            blobHash={message.blobId}
+            roomId={message.roomId ?? message.dmThreadId ?? null}
+            peerPublicKey={message.authorKey}
+            style={styles.media}
+          />
         )}
 
         {message.contentType === 'audio' && message.blobId && (
-          <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? null} />
+          <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? message.dmThreadId ?? null} />
         )}
 
         {message.contentType === 'gif' && message.embedUrl && (
@@ -318,6 +326,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
+  shieldAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#d7b28d',
+    borderWidth: 1,
+    borderColor: '#b89269',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   avatarInitials: {
     color: '#fff',
     fontSize: 13,
@@ -347,7 +365,7 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
   headerTimestamp: {
-    color: '#555',
+    color: '#8d7763',
     fontSize: 11,
   },
 
@@ -358,7 +376,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
 inlineTimestamp: {
-    color: '#555',
+    color: '#8d7763',
     fontSize: 10,
     marginBottom: 2,
   },
@@ -367,21 +385,21 @@ inlineTimestamp: {
     marginBottom: 6,
     paddingLeft: 10,
     borderLeftWidth: 2,
-    borderLeftColor: '#2a2a2a',
+    borderLeftColor: '#3a3026',
   },
   replyPreviewInner: {
-    backgroundColor: '#141414',
+    backgroundColor: '#1a140f',
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#1f1f1f',
+    borderColor: '#2f261e',
   },
-  replyPreviewUser: { color: '#8ab4f8', fontSize: 12, fontWeight: '600' },
-  replyPreviewText: { color: '#bbb', fontSize: 12, marginTop: 2 },
+  replyPreviewUser: { color: '#d7b28d', fontSize: 12, fontWeight: '600' },
+  replyPreviewText: { color: '#d5c2ae', fontSize: 12, marginTop: 2 },
 
   media: { width: '100%', minHeight: 160, borderRadius: 6, marginTop: 4 },
-  edited: { color: '#555', fontSize: 11, fontStyle: 'italic', marginTop: 2 },
+  edited: { color: '#8d7763', fontSize: 11, fontStyle: 'italic', marginTop: 2 },
 
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   reactionBadge: {
@@ -390,39 +408,31 @@ inlineTimestamp: {
     gap: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    backgroundColor: '#1b1b1b',
+    backgroundColor: '#211a14',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#1f1f1f',
+    borderColor: '#3a3026',
   },
-  reactionBadgeActive: { borderColor: '#3b82f6' },
+  reactionBadgeActive: { borderColor: '#d7b28d' },
   reactionEmojiText: { fontSize: 14 },
   reactionEmojiImg: { width: 14, height: 14, borderRadius: 3 },
-  reactionCount: { color: '#bbb', fontSize: 12 },
+  reactionCount: { color: '#d5c2ae', fontSize: 12 },
 
-  deletedText: { color: '#555', fontSize: 14, fontStyle: 'italic', flex: 1, paddingTop: 2 },
+  deletedText: { color: '#8d7763', fontSize: 14, fontStyle: 'italic', flex: 1, paddingTop: 2 },
 
   replyBtn: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#1e1e1e',
+    backgroundColor: '#251d16',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 4,
     alignSelf: 'center',
   },
-  replyBtnText: { color: '#888', fontSize: 14 },
+  replyBtnText: { color: '#c8b49f', fontSize: 14 },
 
   audioBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   audioBtnText: { color: '#fff', fontSize: 20 },
-  audioLabel: { color: '#aaa', fontSize: 13 },
-});
-
-const emailStyles = StyleSheet.create({
-  card: { backgroundColor: '#1a1a1a', borderRadius: 8, padding: 12, borderLeftWidth: 3, borderLeftColor: '#F2E58F' },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  from: { color: '#888', fontSize: 12 },
-  subject: { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 4 },
-  preview: { color: '#666', fontSize: 13 },
+  audioLabel: { color: '#d5c2ae', fontSize: 13 },
 });

@@ -1,7 +1,7 @@
 //! P2Panda SqliteStore initialisation and the `GardensCore` global singleton.
 //!
 //! The UniFFI `init_core()` function is the sole entry point called from
-//! React Native after the biometric unlock provides the private key.
+//! React Native after key retrieval provides the private key.
 
 use std::sync::OnceLock;
 
@@ -101,7 +101,7 @@ pub async fn init_read_pool(db_dir: &str) -> Result<SqlitePool, StoreError> {
         .map_err(|e| StoreError::Init(e.to_string()))
 }
 
-/// Called once from RN after biometric unlock.
+/// Called once from RN after key retrieval.
 ///
 /// * `private_key_hex` — 64 hex chars from iOS Keychain / Android Keystore.
 /// * `db_dir` — writable directory path for SQLite files.

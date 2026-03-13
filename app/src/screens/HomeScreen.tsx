@@ -10,13 +10,15 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Shield } from 'lucide-react-native';
 import { useOrgsStore } from '../stores/useOrgsStore';
 import { useConversationsStore } from '../stores/useConversationsStore';
 import { useProfileStore } from '../stores/useProfileStore';
 import { useAuthStore } from '../stores/useAuthStore';
-import { useInboxStore } from '../stores/useInboxStore';
 import { useSyncStore, deriveInboxTopicHex } from '../stores/useSyncStore';
 import { useMessagesStore } from '../stores/useMessagesStore';
+import { useJoinRequestsStore } from '../stores/useJoinRequestsStore';
 import { BlobImage } from '../components/BlobImage';
 import { SheetManager } from 'react-native-actions-sheet';
 
@@ -47,14 +49,20 @@ function formatTime(ts: number | null | undefined): string {
 
 type ListItem =
   | { kind: 'dm';  threadId: string; recipientKey: string; lastMessageAt: number | null; sortTs: number }
+  | { kind: 'admin'; threadId: string; recipientKey: string; orgId: string; orgName: string; lastMessageAt: number | null; sortTs: number }
   | { kind: 'org'; orgId: string;    name: string;          typeLabel: string;            sortTs: number };
 
 export function HomeScreen({ navigation }: Props) {
-  const { orgs, fetchMyOrgs } = useOrgsStore();
+  const insets = useSafeAreaInsets();
+  const { orgs, fetchMyOrgs, newOrgIds, clearNewOrgs } = useOrgsStore();
   const { conversations, requests, fetchConversations, deleteConversation } = useConversationsStore();
+  const {
+    threads: joinRequests,
+    fetchThreads: fetchJoinRequests,
+    resolveThread: resolveJoinRequestThread,
+  } = useJoinRequestsStore();
   const { myProfile, profileCache, fetchProfile } = useProfileStore();
   const { keypair } = useAuthStore();
-  const { unreadCount } = useInboxStore();
   const { subscribe, unsubscribe, opTick } = useSyncStore();
   const { messages } = useMessagesStore();
   const [loading, setLoading] = useState(true);
@@ -62,6 +70,11 @@ export function HomeScreen({ navigation }: Props) {
   const inboxTopic = keypair?.publicKeyHex ? deriveInboxTopicHex(keypair.publicKeyHex) : null;
 
   const myKey = myProfile?.publicKey ?? keypair?.publicKeyHex ?? '';
+  const orgList = Array.isArray(orgs) ? orgs : [];
+  const conversationList = Array.isArray(conversations) ? conversations : [];
+  const requestList = Array.isArray(requests) ? requests : [];
+  const joinRequestList = Array.isArray(joinRequests) ? joinRequests : [];
+  const newOrgIdList = Array.isArray(newOrgIds) ? newOrgIds : [];
 
   useEffect(() => {
     loadData();
@@ -72,30 +85,61 @@ export function HomeScreen({ navigation }: Props) {
     useCallback(() => {
       fetchMyOrgs().catch(() => {});
       fetchConversations().catch(() => {});
-      if (!inboxTopic) return;
+      fetchJoinRequests().catch(() => {});
+      if (!inboxTopic || typeof subscribe !== 'function' || typeof unsubscribe !== 'function') {
+        return;
+      }
       subscribe(inboxTopic);
       return () => unsubscribe(inboxTopic);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [inboxTopic]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      const threadIds = [
+        ...conversationList.map(t => t.threadId),
+        ...requestList.map(t => t.threadId),
+        ...joinRequestList.map(t => t.threadId),
+      ];
+      for (const threadId of threadIds) {
+        if (typeof subscribe === 'function') {
+          subscribe(threadId);
+        }
+      }
+      return () => {
+        for (const threadId of threadIds) {
+          if (typeof unsubscribe === 'function') {
+            unsubscribe(threadId);
+          }
+        }
+      };
+    }, [conversationList, joinRequestList, requestList, subscribe, unsubscribe]),
+  );
+
   useEffect(() => {
     fetchConversations().catch(() => {});
+    fetchMyOrgs().catch(() => {});
+    fetchJoinRequests().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opTick]);
 
   useEffect(() => {
-    if (!myKey || conversations.length === 0) return;
-    for (const t of conversations) {
+    if (!myKey) return;
+    for (const t of conversationList) {
       const recipientKey = t.initiatorKey === myKey ? t.recipientKey : t.initiatorKey;
-      fetchProfile(recipientKey);
+      fetchProfile(recipientKey).catch(() => {});
     }
-  }, [conversations, myKey, fetchProfile]);
+    for (const t of joinRequestList) {
+      const recipientKey = t.participantKey === myKey ? t.adminKey : t.participantKey;
+      fetchProfile(recipientKey).catch(() => {});
+    }
+  }, [conversationList, fetchProfile, joinRequestList, myKey]);
 
   async function loadData() {
     setLoading(true);
     try {
-      await Promise.all([fetchMyOrgs(), fetchConversations()]);
+      await Promise.all([fetchMyOrgs(), fetchConversations(), fetchJoinRequests()]);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to load data');
     } finally {
@@ -104,7 +148,7 @@ export function HomeScreen({ navigation }: Props) {
   }
 
   const items: ListItem[] = [
-    ...conversations.map(t => {
+    ...conversationList.map(t => {
       const recipientKey = t.initiatorKey === myKey ? t.recipientKey : t.initiatorKey;
       return {
         kind: 'dm' as const,
@@ -114,7 +158,19 @@ export function HomeScreen({ navigation }: Props) {
         sortTs: t.lastMessageAt ?? t.createdAt,
       };
     }),
-    ...orgs.map(o => ({
+    ...joinRequestList.map(t => {
+      const recipientKey = t.participantKey === myKey ? t.adminKey : t.participantKey;
+      return {
+        kind: 'admin' as const,
+        threadId: t.threadId,
+        recipientKey,
+        orgId: t.orgId,
+        orgName: orgList.find(o => o.orgId === t.orgId)?.name ?? 'Organization',
+        lastMessageAt: t.lastMessageAt,
+        sortTs: t.lastMessageAt ?? t.createdAt,
+      };
+    }),
+    ...orgList.map(o => ({
       kind: 'org' as const,
       orgId: o.orgId,
       name: o.name,
@@ -132,9 +188,11 @@ export function HomeScreen({ navigation }: Props) {
   }
 
   function renderItem({ item }: { item: ListItem }) {
-    if (item.kind === 'dm') {
+    if (item.kind === 'dm' || item.kind === 'admin') {
       const profile = profileCache[item.recipientKey];
-      const displayName = profile?.username ?? item.recipientKey.slice(0, 8) + '…';
+      const displayName = item.kind === 'admin'
+        ? `${item.orgName} admins`
+        : (profile?.username ?? item.recipientKey.slice(0, 8) + '…');
       const initials = profile?.username
         ? profile.username.slice(0, 2).toUpperCase()
         : '?';
@@ -143,17 +201,39 @@ export function HomeScreen({ navigation }: Props) {
         <TouchableOpacity
           style={styles.row}
           activeOpacity={0.7}
-          onPress={() => navigation.navigate('Conversation', { threadId: item.threadId, recipientKey: item.recipientKey })}
+          onPress={() => navigation.navigate('Conversation', {
+            threadId: item.threadId,
+            recipientKey: item.recipientKey,
+            ...(item.kind === 'admin'
+              ? {
+                  orgId: item.orgId,
+                  orgName: item.orgName,
+                  conversationLabel: `${item.orgName} admins`,
+                }
+              : {}),
+          })}
           onLongPress={() => {
-            SheetManager.show('conversation-actions-sheet', {
+            const isAdminThread = item.kind === 'admin';
+            SheetManager.show?.('conversation-actions-sheet', {
               payload: {
                 title: displayName,
-                onDelete: () => deleteConversation(item.threadId),
+                actionLabel: isAdminThread ? 'Resolve Message' : 'Delete conversation',
+                onDelete: () => {
+                  if (isAdminThread) {
+                    resolveJoinRequestThread(item.threadId).catch(() => {});
+                    return;
+                  }
+                  deleteConversation(item.threadId).catch(() => {});
+                },
               },
             });
           }}
         >
-          {profile?.avatarBlobId ? (
+          {item.kind === 'admin' ? (
+            <View style={styles.adminAvatar}>
+              <Shield size={18} color="#3a2817" />
+            </View>
+          ) : profile?.avatarBlobId ? (
             <BlobImage blobHash={profile.avatarBlobId} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, { backgroundColor: color }]}>
@@ -166,7 +246,8 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={styles.time}>{formatTime(item.lastMessageAt)}</Text>
             </View>
             {(() => {
-              const threadMsgs = (messages[item.threadId] ?? []).filter(
+              const threadMessages = messages[item.threadId];
+              const threadMsgs = (Array.isArray(threadMessages) ? threadMessages : []).filter(
                 m => !m.isDeleted && m.contentType !== 'profile'
               );
               const last = threadMsgs[threadMsgs.length - 1];
@@ -185,7 +266,11 @@ export function HomeScreen({ navigation }: Props) {
                 }
               }
               return (
-                <Text style={styles.sub} numberOfLines={1}>{preview}</Text>
+                <Text style={styles.sub} numberOfLines={1}>
+                  {item.kind === 'admin'
+                    ? (last ? `Admin thread • ${preview}` : 'Admin thread • Request to join or message admins')
+                    : preview}
+                </Text>
               );
             })()}
           </View>
@@ -196,12 +281,15 @@ export function HomeScreen({ navigation }: Props) {
     // org
     const initials = item.name.slice(0, 2).toUpperCase();
     const color = avatarColor(item.name);
-    const org = orgs.find(o => o.orgId === item.orgId);
+    const org = orgList.find(o => o.orgId === item.orgId);
     return (
       <TouchableOpacity
         style={styles.row}
         activeOpacity={0.7}
-        onPress={() => navigation.navigate('OrgChat', { orgId: item.orgId, orgName: item.name })}
+        onPress={() => {
+          if (newOrgIdList.includes(item.orgId)) clearNewOrgs();
+          navigation.navigate('OrgChat', { orgId: item.orgId, orgName: item.name });
+        }}
       >
         {org?.avatarBlobId ? (
           <BlobImage blobHash={org.avatarBlobId} style={styles.avatar} />
@@ -224,8 +312,9 @@ export function HomeScreen({ navigation }: Props) {
   return (
     <FlatList
       style={styles.root}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 104 }}
       data={items}
-      keyExtractor={item => item.kind === 'dm' ? item.threadId : item.orgId}
+      keyExtractor={item => item.kind === 'org' ? item.orgId : item.threadId}
       renderItem={renderItem}
       ListHeaderComponent={
         <View>
@@ -235,27 +324,27 @@ export function HomeScreen({ navigation }: Props) {
             onPress={() => navigation.navigate('Inbox')}
           >
             <View style={styles.inboxLeft}>
-              <Text style={styles.inboxLabel}>Inbox</Text>
-              <Text style={styles.inboxSub}>Email messages</Text>
+              <Text style={styles.inboxLabel}>Requests</Text>
+              <Text style={styles.inboxSub}>Synced message requests</Text>
             </View>
-            {unreadCount > 0 && (
+            {requestList.length > 0 && (
               <View style={styles.inboxBadge}>
-                <Text style={styles.inboxBadgeText}>{unreadCount}</Text>
+                <Text style={styles.inboxBadgeText}>{requestList.length}</Text>
               </View>
             )}
           </TouchableOpacity>
-          {requests.length > 0 && (
+          {newOrgIdList.length > 0 && (
             <TouchableOpacity
-              style={styles.requestsRow}
+              style={styles.orgInvitesRow}
               activeOpacity={0.7}
-              onPress={() => navigation.navigate('Requests')}
+              onPress={() => clearNewOrgs()}
             >
-              <View style={styles.requestsLeft}>
-                <Text style={styles.requestsLabel}>Message Requests</Text>
-                <Text style={styles.requestsSub}>People who want to chat</Text>
+              <View style={styles.orgInvitesLeft}>
+                <Text style={styles.orgInvitesLabel}>New Communities</Text>
+                <Text style={styles.orgInvitesSub}>You've been added to new communities</Text>
               </View>
-              <View style={styles.requestsBadge}>
-                <Text style={styles.requestsBadgeText}>{requests.length}</Text>
+              <View style={styles.orgInvitesBadge}>
+                <Text style={styles.orgInvitesBadgeText}>{newOrgIdList.length}</Text>
               </View>
             </TouchableOpacity>
           )}
@@ -289,6 +378,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 12,
     flexShrink: 0,
+  },
+  adminAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    flexShrink: 0,
+    backgroundColor: '#d7b28d',
+    borderWidth: 1,
+    borderColor: '#b89269',
   },
   avatarText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
@@ -325,7 +426,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   inboxBadgeText: { color: '#000', fontSize: 12, fontWeight: '700' },
-  requestsRow: {
+  orgInvitesRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -335,17 +436,17 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1a1a1a',
     backgroundColor: '#0b0b0b',
   },
-  requestsLeft: { flex: 1 },
-  requestsLabel: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  requestsSub: { color: '#666', fontSize: 12, marginTop: 2 },
-  requestsBadge: {
+  orgInvitesLeft: { flex: 1 },
+  orgInvitesLabel: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  orgInvitesSub: { color: '#666', fontSize: 12, marginTop: 2 },
+  orgInvitesBadge: {
     minWidth: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#60a5fa',
+    backgroundColor: '#34d399',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 6,
   },
-  requestsBadgeText: { color: '#0b0b0b', fontSize: 12, fontWeight: '700' },
+  orgInvitesBadgeText: { color: '#000', fontSize: 12, fontWeight: '700' },
 });

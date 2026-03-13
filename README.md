@@ -78,6 +78,80 @@ flowchart TB
 | **Email** | Cloudflare Email Routing | Inbound routing + relay-signed outbound send |
 | **Push** | FCM/APNs | Push notifications via relay |
 
+## Operation Payloads (What an `op` Looks Like)
+
+Gardens operations are authored on-device in Rust core, encoded as CBOR, and
+transported via the sync worker.
+
+### 1) Client → Sync Worker (`POST /deliver`)
+
+From the React Native layer (`broadcastOp`), each op is posted as:
+
+```json
+{
+  "topic_hex": "9c49275a2975118f...",
+  "op_base64": "o2Zsb2dfaWRnbWVzc2FnZWtoZWFkZXJfYnl0ZXNY..."
+}
+```
+
+- `topic_hex`: 64-char topic ID (room/thread/inbox topic)
+- `op_base64`: base64-encoded CBOR bytes of a `GossipEnvelope`
+
+### 2) Sync Worker → Client WebSocket (`/topic/:topic_hex`)
+
+The sync worker pushes frames like:
+
+```json
+{
+  "type": "op",
+  "seq": 42,
+  "data": "o2Zsb2dfaWRnbWVzc2FnZWtoZWFkZXJfYnl0ZXNY..."
+}
+```
+
+- `seq`: per-topic sequence number
+- `data`: same base64 CBOR `GossipEnvelope` payload
+
+### 3) Decoded `GossipEnvelope` (CBOR → struct)
+
+After base64 decode and CBOR decode in core:
+
+```json
+{
+  "log_id": "message",
+  "header_bytes": "<p2panda header bytes>",
+  "body_bytes": "<op body bytes>"
+}
+```
+
+`header_bytes` and `body_bytes` are binary bytes; they are not JSON on wire.
+
+### 4) Example decoded body for a message op (`log_id = "message"`)
+
+The body bytes decode to an op-specific payload, e.g. `MessageOp`:
+
+```json
+{
+  "op_type": "send",
+  "room_id": "b54c82d364e8f8ce1d06e56fe156edc6...",
+  "dm_thread_id": null,
+  "content_type": "text",
+  "text_content": "hey",
+  "blob_id": null,
+  "embed_url": null,
+  "mentions": [],
+  "reply_to": null
+}
+```
+
+Other payload structs exist for orgs, rooms, reactions, membership, threads, etc.
+See `core/src/ops.rs`.
+
+### Note on source of ops
+
+- Normal chat/org/thread ops are created locally on device, then relayed/synced.
+- A small class of ops (e.g. `receive_email`) can be server-injected by relay/email flow.
+
 ## Project Structure
 
 ```

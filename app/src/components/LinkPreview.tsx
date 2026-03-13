@@ -8,6 +8,7 @@ import {
   Linking,
   ActivityIndicator,
 } from 'react-native';
+import { verifyInviteToken } from '../ffi/gardensCore';
 
 interface OgData {
   title?: string;
@@ -89,7 +90,29 @@ interface Props {
   url: string;
 }
 
+function parseInviteUrl(url: string): { tokenBase64: string; orgName?: string } | null {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+    const isGardensHost = parsed.host === 'usegardens.com' || parsed.host === 'www.usegardens.com';
+    const isInvitePath =
+      parsed.protocol === 'gardens:'
+        ? parsed.host === 'invite'
+        : pathParts[0] === 'invite';
+    if (!isInvitePath || !(isGardensHost || parsed.protocol === 'gardens:')) return null;
+    const tokenBase64 = parsed.searchParams.get('token');
+    if (!tokenBase64) return null;
+    return {
+      tokenBase64,
+      orgName: parsed.searchParams.get('name') ?? undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function LinkPreview({ url }: Props) {
+  const inviteLink = parseInviteUrl(url);
   const cached = Object.prototype.hasOwnProperty.call(ogCache, url) ? ogCache[url] : undefined;
   const [data, setData] = useState<OgData | null>(cached ?? null);
   const [loading, setLoading] = useState(cached === undefined);
@@ -126,6 +149,37 @@ export function LinkPreview({ url }: Props) {
       cancelled = true;
     };
   }, [url, cached]);
+
+  if (inviteLink) {
+    let accessLevel = 'unknown';
+    let expiryLabel = 'Invite';
+    try {
+      const info = verifyInviteToken(inviteLink.tokenBase64, Date.now());
+      accessLevel = info.accessLevel;
+      expiryLabel = `Expires ${new Date(info.expiryTimestamp).toLocaleDateString()}`;
+    } catch {
+      expiryLabel = 'Invite link';
+    }
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.accent} />
+        <View style={styles.body}>
+          <Text style={styles.siteName}>Gardens invite</Text>
+          <Text style={styles.title}>{inviteLink.orgName ?? 'Private Organization'}</Text>
+          <Text style={styles.description}>
+            Signed private invite for {accessLevel} access. Opens an admin request flow instead of auto-joining.
+          </Text>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => Linking.openURL(url)}>
+              <Text style={styles.actionBtnText}>Open Invite</Text>
+            </TouchableOpacity>
+            <Text style={styles.expiryText}>{expiryLabel}</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -258,5 +312,29 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginTop: 6,
     backgroundColor: '#1e1f22',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  actionBtn: {
+    backgroundColor: '#3f7cff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  actionBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  expiryText: {
+    color: '#888',
+    fontSize: 12,
+    marginLeft: 8,
+    flex: 1,
+    textAlign: 'right',
   },
 });

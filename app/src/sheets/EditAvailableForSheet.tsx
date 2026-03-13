@@ -105,6 +105,7 @@ export function EditAvailableForSheet(props: SheetProps<'edit-available-for-shee
     <ActionSheet
       id={props.sheetId}
       gestureEnabled
+      useBottomSafeAreaPadding
       containerStyle={s.container}
       indicatorStyle={s.handle}
     >

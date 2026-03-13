@@ -11,7 +11,8 @@ import {
   Clipboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LOCATION_STORAGE_KEY } from '../sheets/LocationPickerSheet';
+import { LOCATION_STORAGE_KEY, claimProfileSlug } from '../sheets/LocationPickerSheet';
+import { PROFILE_SLUG_DOMAIN } from '../stores/useProfileStore';
 import { SheetManager } from 'react-native-actions-sheet';
 import { PublicIdentityCard } from '../components/PublicIdentityCard';
 import { useProfileStore, type Profile } from '../stores/useProfileStore';
@@ -88,7 +89,7 @@ function ToggleRow({
 }
 
 export function UserSettingsScreen() {
-  const { fetchMyProfile, localUsername } = useProfileStore();
+  const { fetchMyProfile, localUsername, profileSlug, profileSlugUrl, loadProfileSlug } = useProfileStore();
   const { dndEnabled, setDnd, loadSettings } = useSettingsStore();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isPublic, setIsPublic] = useState(false);
@@ -122,8 +123,9 @@ export function UserSettingsScreen() {
 
   useEffect(() => {
     loadProfile();
+    loadProfileSlug();
     AsyncStorage.getItem(LOCATION_STORAGE_KEY).then(v => setLocation(v)).catch(() => {});
-  }, [loadProfile]);
+  }, [loadProfile, loadProfileSlug]);
 
   useEffect(() => {
     loadSettings();
@@ -150,10 +152,26 @@ export function UserSettingsScreen() {
       await loadProfile();
       
       if (value) {
-        Alert.alert(
-          'Public Profile Enabled',
-          'Your profile is now published to the DHT and can be discovered by others.'
-        );
+        const refreshed = await getMyProfile();
+        if (refreshed?.publicKey && refreshed?.username) {
+          const result = await claimProfileSlug(refreshed.publicKey, refreshed.username);
+          if (result) {
+            Alert.alert(
+              'Public Profile Enabled',
+              `Your profile is now live at:\n${result.url}`
+            );
+          } else {
+            Alert.alert(
+              'Public Profile Enabled',
+              'Your profile is now published to the DHT and can be discovered by others.'
+            );
+          }
+        } else {
+          Alert.alert(
+            'Public Profile Enabled',
+            'Your profile is now published to the DHT and can be discovered by others.'
+          );
+        }
       }
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to update profile');
@@ -170,7 +188,7 @@ export function UserSettingsScreen() {
       console.log('[UserSettings] SheetManager:', SheetManager);
       console.log('[UserSettings] SheetManager.show:', (SheetManager as any).show);
       (SheetManager as any).show('edit-profile-sheet');
-    } catch (err) {
+    } catch (err: any) {
       console.error('[UserSettings] Error opening edit-profile-sheet:', err);
       Alert.alert('Error', `Failed to open: ${err.message}`);
     }
@@ -288,7 +306,29 @@ export function UserSettingsScreen() {
               pkarrUrl={pkarrUrl}
               publicKeyHex={profile.publicKey}
               label="Your Public Profile"
+              publicLinkOverride={profileSlugUrl || undefined}
             />
+          </View>
+        )}
+        
+        {isPublic && profileSlugUrl && (
+          <View style={s.slugContainer}>
+            <Text style={s.slugLabel}>Your Public Link</Text>
+            <View style={s.slugRow}>
+              <Text style={s.slugText} numberOfLines={1}>
+                {profileSlugUrl.replace('https://', '')}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  Clipboard.setString(profileSlugUrl);
+                }}
+              >
+                <Text style={s.slugCopyBtn}>Copy</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={s.slugHint}>
+              Share this link so people can find your profile
+            </Text>
           </View>
         )}
       </Section>
@@ -450,6 +490,47 @@ const s = StyleSheet.create({
   cardContainer: {
     padding: 12,
     backgroundColor: '#0a0a0a',
+  },
+
+  slugContainer: {
+    marginTop: 12,
+    padding: 16,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    marginHorizontal: 12,
+  },
+  slugLabel: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  slugRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    backgroundColor: '#0a0a0a',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  slugText: {
+    color: '#F2E58F',
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  slugCopyBtn: {
+    color: '#3b82f6',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  slugHint: {
+    color: '#666',
+    fontSize: 12,
   },
 
   dangerRow: {

@@ -14,15 +14,36 @@ import { blake3 } from '@noble/hashes/blake3';
 
 export const DEFAULT_SYNC_URL = 'https://gardens-sync.stereos.workers.dev';
 
+function encodeAscii(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length);
+  for (let i = 0; i < value.length; i++) {
+    bytes[i] = value.charCodeAt(i) & 0xff;
+  }
+  return bytes;
+}
+
 /** Derive the personal inbox topic for a given public key hex. */
 export function deriveInboxTopicHex(pubkeyHex: string): string {
   const bytes = new Uint8Array(
     pubkeyHex.match(/.{2}/g)!.map((b) => parseInt(b, 16))
   );
-  const suffix = new TextEncoder().encode('gardens:inbox:v1');
+  const suffix = encodeAscii('gardens:inbox:v1');
   const input = new Uint8Array(bytes.length + suffix.length);
   input.set(bytes);
   input.set(suffix, bytes.length);
+  const hash = blake3(input);
+  return Array.from(hash)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Derive the shared org-admin inbox topic for a given org id. */
+export function deriveOrgAdminTopicHex(orgId: string): string {
+  const orgBytes = encodeAscii(orgId);
+  const suffix = encodeAscii('gardens:org-admin:v1');
+  const input = new Uint8Array(orgBytes.length + suffix.length);
+  input.set(orgBytes);
+  input.set(suffix, orgBytes.length);
   const hash = blake3(input);
   return Array.from(hash)
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -48,15 +69,18 @@ interface TopicSocket {
 
 interface SyncState {
   sockets: Map<string, TopicSocket>;
+  lastSeqByTopic: Record<string, number>;
   // Incremented each time an op is ingested — screens watch this to re-fetch
   opTick: number;
   subscribe(topicHex: string, syncUrl?: string): void;
+  hydrateTopic(topicHex: string, options?: { timeoutMs?: number; settleMs?: number; syncUrl?: string }): Promise<number>;
   unsubscribe(topicHex: string): void;
   unsubscribeAll(): void;
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
   sockets: new Map(),
+  lastSeqByTopic: {},
   opTick: 0,
 
   subscribe(topicHex: string, syncUrl = DEFAULT_SYNC_URL) {
@@ -104,7 +128,10 @@ export const useSyncStore = create<SyncState>((set, get) => ({
             } catch {
               // not an email op
             }
-            set((s) => ({ opTick: s.opTick + 1 }));
+            set((s) => ({
+              opTick: s.opTick + 1,
+              lastSeqByTopic: { ...s.lastSeqByTopic, [topicHex]: msg.seq! },
+            }));
           }
         } catch (outerErr) {
           console.warn('[sync] onmessage parse error', outerErr);
@@ -129,6 +156,44 @@ export const useSyncStore = create<SyncState>((set, get) => ({
         return { sockets: next };
       });
     })();
+  },
+
+  async hydrateTopic(topicHex: string, options) {
+    const timeoutMs = options?.timeoutMs ?? 4000;
+    const settleMs = options?.settleMs ?? 600;
+    const syncUrl = options?.syncUrl ?? DEFAULT_SYNC_URL;
+
+    let baselineSeq = get().lastSeqByTopic[topicHex];
+    if (baselineSeq == null) {
+      try {
+        baselineSeq = await getTopicSeq(topicHex);
+      } catch {
+        baselineSeq = 0;
+      }
+    }
+
+    get().subscribe(topicHex, syncUrl);
+
+    const startedAt = Date.now();
+    let latestSeq = baselineSeq;
+    let lastAdvanceAt = 0;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise<void>(resolve => setTimeout(() => resolve(), 100));
+      const nextSeq = get().lastSeqByTopic[topicHex] ?? latestSeq;
+
+      if (nextSeq > latestSeq) {
+        latestSeq = nextSeq;
+        lastAdvanceAt = Date.now();
+        continue;
+      }
+
+      if (lastAdvanceAt > 0 && Date.now() - lastAdvanceAt >= settleMs) {
+        break;
+      }
+    }
+
+    return get().lastSeqByTopic[topicHex] ?? latestSeq;
   },
 
   unsubscribe(topicHex: string) {

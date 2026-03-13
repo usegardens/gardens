@@ -55,6 +55,10 @@ yarn-error.log
 
 # Bundle artifact
 *.jsbundle
+android/android/
+android/app/android/
+android/app/src/main/assets/index.android.bundle
+android/app/src/main/res/drawable-*/node_modules_reactnative_libraries_logbox_ui_logboximages_*.png
 
 # Ruby / CocoaPods
 **/Pods/

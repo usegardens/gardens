@@ -14,9 +14,13 @@ interface Env {
   APP_STORE_URL?: string;
   PLAY_STORE_URL?: string;
   DEFAULT_RELAY_URL?: string;
+  PROFILE_SLUG_DOMAIN?: string;
   PUBLIC_BLOBS: KVNamespace;
+  PROFILE_INDEX_KV: KVNamespace;
 }
 
+const SLUG_PATTERN = /^@?[a-z0-9\p{Emoji}](?:[a-z0-9\p{Emoji}-]{0,61}[a-z0-9\p{Emoji}])?$/u;
+const RESERVED_SLUGS = new Set(['www', 'pk', 'join', 'invite', 'health', 'blob', 'debug', 'gateway', 'relay']);
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -83,9 +87,23 @@ app.get('/pk/:z32Key', async (c) => {
   return handleProfileRequest(c, z32Key);
 });
 
+app.get('/u/:slug', async (c) => {
+  const rawSlug = c.req.param('slug').toLowerCase();
+  const slug = normalizeSlug(rawSlug);
+  if (!SLUG_PATTERN.test(slug)) {
+    return c.json({ error: 'Invalid slug' }, 400);
+  }
+
+  const z32Key = await resolveSlugToPkarr(c.env.PROFILE_INDEX_KV, slug);
+  if (!z32Key) {
+    return c.html(renderSlugNotFoundPage(slug), 404);
+  }
+  return handleProfileRequest(c, z32Key);
+});
+
 // Custom domain handler - checks for _gardens.<domain> TXT record
 app.get('/', async (c) => {
-  const host = c.req.header('host');
+  const host = normalizeHost(c.req.header('host'));
 
   // If it's a custom domain (not the gateway's own domain), try to resolve it
   if (host && !isGatewayDomain(host)) {
@@ -107,17 +125,51 @@ app.get('/', async (c) => {
  * Check if the host is the gateway's own domain (not a custom domain)
  */
 function isGatewayDomain(host: string): boolean {
+  const normalizedHost = normalizeHost(host);
   // List of gateway's own domains
   const gatewayDomains = [
     'localhost',
-    'localhost:8787',
     'pk.gardens.app',
     'gateway.gardens.app',
+    'usegardens.com',
+    'www.usegardens.com',
     'gardens.pages.dev',
   ];
 
   // Check exact match or ends with .pages.dev (Cloudflare Pages)
-  return gatewayDomains.includes(host) || host.endsWith('.pages.dev');
+  return gatewayDomains.includes(normalizedHost) || normalizedHost.endsWith('.pages.dev');
+}
+
+function normalizeHost(host: string | undefined): string {
+  if (!host) return '';
+  const withoutPort = host.split(':')[0] ?? host;
+  return withoutPort.trim().toLowerCase();
+}
+
+export function normalizeSlug(input: string): string {
+  if (!input) return '';
+  let normalized = input.normalize('NFKD').toLowerCase().trim();
+  const hasAt = normalized.startsWith('@');
+  normalized = normalized.replace(/[^\w\-\p{Emoji}]/gu, '');
+  normalized = normalized.replace(/_/g, '');
+  normalized = normalized.replace(/-+/g, '-');
+  normalized = normalized.replace(/^-+|-+$/g, '');
+  if (hasAt && !normalized.startsWith('@')) {
+    normalized = '@' + normalized;
+  }
+  return (normalized || '').slice(0, 63);
+}
+
+async function resolveSlugToPkarr(kv: KVNamespace, slug: string): Promise<string | null> {
+  const raw = await kv.get(`slug:${slug}`);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { z32Key?: string };
+    if (typeof parsed.z32Key !== 'string' || !parsed.z32Key.trim()) return null;
+    return parsed.z32Key;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -146,14 +198,14 @@ async function handleProfileRequest(
   let html: string;
   switch (record.recordType) {
     case 'org':
-      html = renderOrgPage(record, options);
+      html = await renderOrgPage(record, options);
       break;
     case 'relay':
       html = renderRelayPage(record, options);
       break;
     case 'user':
     default:
-      html = renderProfilePage(record, options);
+      html = await renderProfilePage(record, options);
       break;
   }
 
@@ -297,6 +349,54 @@ function renderDomainNotConfiguredPage(domain: string): string {
     </div>
 
     <p style="margin-top: 24px;"><a href="https://gardens.app">Download Gardens App</a></p>
+  </div>
+</body>
+</html>`;
+}
+
+function renderSlugNotFoundPage(slug: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile Not Found - Gardens</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container { text-align: center; max-width: 460px; }
+    .icon { font-size: 64px; margin-bottom: 20px; }
+    h1 { font-size: 24px; margin-bottom: 12px; }
+    p { color: #888; line-height: 1.6; margin-bottom: 16px; }
+    .slug {
+      font-family: monospace;
+      background: #1a1a1a;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 20px;
+      color: #f5d88d;
+    }
+    a { color: #3b82f6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">🔗</div>
+    <h1>Slug Not Found</h1>
+    <p>This profile link is not claimed or no longer available.</p>
+    <div class="slug">${escapeHtml(slug)}.usegardens.com</div>
+    <p><a href="https://gardens.app">Download Gardens App</a></p>
   </div>
 </body>
 </html>`;

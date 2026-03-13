@@ -61,10 +61,6 @@ export function MemberListScreen({ route, navigation }: Props) {
     loadMembers();
   }, [loadMembers]);
 
-  function handleAddMember() {
-    navigation.navigate('AddMember', { orgId, orgName });
-  }
-
   function handleMemberPress(member: MemberWithProfile) {
     SheetManager.show('member-actions-sheet', {
       payload: {
@@ -125,9 +121,6 @@ export function MemberListScreen({ route, navigation }: Props) {
     <View style={styles.root}>
       <View style={styles.header}>
         <Text style={styles.title}>{orgName} Members</Text>
-        <TouchableOpacity style={styles.addBtn} onPress={handleAddMember}>
-          <Text style={styles.addBtnText}>+ Add</Text>
-        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -157,13 +150,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#1a1a1a',
   },
   title: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  addBtn: { 
-    backgroundColor: '#3b82f6', 
-    borderRadius: 8, 
-    paddingHorizontal: 16, 
-    paddingVertical: 8,
-  },
-  addBtnText: { color: '#fff', fontWeight: '600' },
   list: { paddingHorizontal: 16, paddingBottom: 32, paddingTop: 8 },
   card: {
     backgroundColor: '#1a1a1a',

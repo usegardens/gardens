@@ -8,10 +8,12 @@ import {
 } from '../ffi/gardensCore';
 import { broadcastOp, deriveInboxTopicHex } from './useSyncStore';
 import { DEFAULT_RELAY_URL, useProfileStore } from './useProfileStore';
+import { markProfilePayloadSent } from './useDmProfileStore';
 
 interface ConversationsState {
   conversations: DmThread[];
   requests: DmThread[];
+  deletedThreadIds: Set<string>;
 
   fetchConversations(): Promise<void>;
   createConversation(recipientKey: string): Promise<string>;
@@ -21,13 +23,16 @@ interface ConversationsState {
 export const useConversationsStore = create<ConversationsState>((set, get) => ({
   conversations: [],
   requests: [],
+  deletedThreadIds: new Set(),
 
   async fetchConversations() {
     const all = await dcListDmThreads();
-    console.log(`[conversations] fetchConversations → ${all.length} total (${all.filter(t => !t.isRequest).length} conversations, ${all.filter(t => t.isRequest).length} requests)`);
+    const { deletedThreadIds } = get();
+    const visible = all.filter(t => !deletedThreadIds.has(t.threadId));
+    console.log(`[conversations] fetchConversations → ${all.length} total (${visible.filter(t => !t.isRequest).length} conversations, ${visible.filter(t => t.isRequest).length} requests)`);
     set({
-      conversations: all.filter(t => !t.isRequest),
-      requests: all.filter(t => t.isRequest),
+      conversations: visible.filter(t => !t.isRequest),
+      requests: visible.filter(t => t.isRequest),
     });
   },
 
@@ -55,6 +60,7 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
         if (profileResult.opBytes?.length) {
           broadcastOp(result.id, profileResult.opBytes);
         }
+        await markProfilePayloadSent(result.id, profilePayload);
       } catch {
         // profile message is best-effort
       }
@@ -74,6 +80,12 @@ export const useConversationsStore = create<ConversationsState>((set, get) => ({
   },
 
   async deleteConversation(threadId: string) {
+    // Optimistically remove and track so re-fetches triggered by opTick don't resurrect it
+    set(s => ({
+      requests: s.requests.filter(r => r.threadId !== threadId),
+      conversations: s.conversations.filter(c => c.threadId !== threadId),
+      deletedThreadIds: new Set([...s.deletedThreadIds, threadId]),
+    }));
     const result = await dcDeleteConversation(threadId);
     if (result.opBytes?.length) {
       broadcastOp(threadId, result.opBytes);

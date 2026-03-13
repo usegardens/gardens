@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Modal, TextInput, TouchableOpacity, FlatList,
   StyleSheet, ActivityIndicator, Alert, ScrollView,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, X, Users, UserPlus, ChevronRight } from 'lucide-react-native';
+import { ArrowLeft, X } from 'lucide-react-native';
 import type { Room, MemberInfo, Message } from '../ffi/gardensCore';
 import {
   listMessages as dcListMessages,
@@ -13,6 +13,8 @@ import {
   removeMemberFromOrg,
   changeMemberPermission,
 } from '../ffi/gardensCore';
+import { BlobImage } from './BlobImage';
+import { useProfileStore } from '../stores/useProfileStore';
 
 // ── Filter parsing ────────────────────────────────────────────────────────────
 
@@ -45,7 +47,8 @@ interface Props {
   rooms: Room[];
   activeRoomName: string;
   onClose: () => void;
-  onNavigateInvite: () => void;
+  currentUserKey?: string;
+  onOpenAdminChat?: (adminPublicKey: string) => void;
 }
 
 // ── Quick filter hints (shown when query is empty) ────────────────────────────
@@ -56,8 +59,22 @@ const FILTER_HINTS = [
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose, onNavigateInvite }: Props) {
+function isAdminAccess(accessLevel: string): boolean {
+  const normalized = accessLevel.toLowerCase();
+  return normalized === 'manage' || normalized === 'admin';
+}
+
+export function OrgSearchPanel({
+  visible,
+  orgId,
+  rooms,
+  activeRoomName,
+  onClose,
+  currentUserKey,
+  onOpenAdminChat,
+}: Props) {
   const insets = useSafeAreaInsets();
+  const { profileCache, fetchProfile } = useProfileStore();
 
   const [query, setQuery]               = useState('');
   const [members, setMembers]           = useState<MemberInfo[]>([]);
@@ -66,9 +83,16 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
   const [loadingSearch, setLoadingSearch] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { filters, text: freeText } = parseQuery(query);
+  const { filters } = parseQuery(query);
   const { prefix: suggPrefix, partial: suggPartial } = getFilterPrefix(query);
   const hasQuery = query.trim().length > 0;
+
+  const loadMembers = useCallback(async () => {
+    setLoadingMembers(true);
+    try { setMembers(await listOrgMembers(orgId)); }
+    catch { /* non-critical */ }
+    finally { setLoadingMembers(false); }
+  }, [orgId]);
 
   // ── Load members when panel opens ─────────────────────────────────────────
 
@@ -77,31 +101,37 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
     setQuery('');
     setResults([]);
     loadMembers();
-  }, [visible, orgId]);
+  }, [visible, loadMembers]);
 
-  async function loadMembers() {
-    setLoadingMembers(true);
-    try { setMembers(await listOrgMembers(orgId)); }
-    catch { /* non-critical */ }
-    finally { setLoadingMembers(false); }
-  }
+  useEffect(() => {
+    if (!visible) return;
+    for (const member of members) {
+      fetchProfile(member.publicKey).catch(() => {});
+    }
+  }, [fetchProfile, members, visible]);
+
+  const sortedMembers = useMemo(() => {
+    const sorted = [...members];
+    sorted.sort((a, b) => {
+      const adminA = isAdminAccess(a.accessLevel) ? 1 : 0;
+      const adminB = isAdminAccess(b.accessLevel) ? 1 : 0;
+      if (adminA !== adminB) return adminB - adminA;
+      const nameA = (profileCache[a.publicKey]?.username ?? a.publicKey).toLowerCase();
+      const nameB = (profileCache[b.publicKey]?.username ?? b.publicKey).toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+    return sorted;
+  }, [members, profileCache]);
 
   // ── Debounced search ──────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (timer.current) clearTimeout(timer.current);
-    if (!hasQuery) { setResults([]); return; }
-    timer.current = setTimeout(runSearch, 350);
-    return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [query]);
-
-  async function runSearch() {
-    const { filters, text } = parseQuery(query);
-    const inVal     = filters.find(f => f.type === 'in')?.value?.toLowerCase();
-    const fromVal   = filters.find(f => f.type === 'from')?.value?.toLowerCase();
-    const hasVal    = filters.find(f => f.type === 'has')?.value?.toLowerCase();
-    const beforeVal = filters.find(f => f.type === 'before')?.value;
-    const afterVal  = filters.find(f => f.type === 'after')?.value;
+  const runSearch = useCallback(async () => {
+    const { filters: localFilters, text } = parseQuery(query);
+    const inVal     = localFilters.find(f => f.type === 'in')?.value?.toLowerCase();
+    const fromVal   = localFilters.find(f => f.type === 'from')?.value?.toLowerCase();
+    const hasVal    = localFilters.find(f => f.type === 'has')?.value?.toLowerCase();
+    const beforeVal = localFilters.find(f => f.type === 'before')?.value;
+    const afterVal  = localFilters.find(f => f.type === 'after')?.value;
     const beforeTs  = beforeVal ? new Date(beforeVal).getTime() * 1000 : null;
     const afterTs   = afterVal  ? new Date(afterVal).getTime()  * 1000 : null;
 
@@ -126,7 +156,14 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
       setResults(all);
     } catch { /* silently fail */ }
     finally { setLoadingSearch(false); }
-  }
+  }, [query, rooms]);
+
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    if (!hasQuery) { setResults([]); return; }
+    timer.current = setTimeout(runSearch, 350);
+    return () => { if (timer.current) clearTimeout(timer.current); };
+  }, [hasQuery, query, runSearch]);
 
   // ── Autocomplete suggestions (only when typing a filter prefix) ───────────
 
@@ -169,9 +206,24 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
   // ── Member actions ────────────────────────────────────────────────────────
 
   function handleMemberPress(m: MemberInfo) {
-    Alert.alert(m.publicKey.slice(0, 16) + '…', `Role: ${m.accessLevel}`, [
+    const displayName = profileCache[m.publicKey]?.username ?? `${m.publicKey.slice(0, 16)}…`;
+    Alert.alert(displayName, `Role: ${m.accessLevel}`, [
       { text: 'Change Role', onPress: () => promptChangeRole(m) },
       { text: 'Remove', style: 'destructive', onPress: () => confirmRemove(m) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  function handleMemberLongPress(m: MemberInfo) {
+    if (!isAdminAccess(m.accessLevel)) return;
+    if (!onOpenAdminChat) return;
+    if (currentUserKey && m.publicKey === currentUserKey) return;
+    const displayName = profileCache[m.publicKey]?.username ?? `${m.publicKey.slice(0, 16)}…`;
+    Alert.alert('Admin Actions', `Open admin chat with ${displayName}?`, [
+      {
+        text: 'Open Admin Chat',
+        onPress: () => onOpenAdminChat(m.publicKey),
+      },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
@@ -249,11 +301,11 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
             showsHorizontalScrollIndicator={false}
           >
             {filters.map((f, i) => (
-              <TouchableOpacity key={i} style={ps.chip} onPress={() => removeFilter(f)}>
-                <Text style={ps.chipText}>{f.type}:{f.value}</Text>
-                <X size={10} color="#93c5fd" style={{ marginLeft: 5 }} />
-              </TouchableOpacity>
-            ))}
+                <TouchableOpacity key={i} style={ps.chip} onPress={() => removeFilter(f)}>
+                  <Text style={ps.chipText}>{f.type}:{f.value}</Text>
+                  <X size={10} color="#93c5fd" style={ps.chipCloseIcon} />
+                </TouchableOpacity>
+              ))}
           </ScrollView>
         )}
 
@@ -321,39 +373,36 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
             <View style={ps.center}><ActivityIndicator color="#fff" /></View>
           ) : (
             <FlatList
-              data={members}
+              data={sortedMembers}
               keyExtractor={m => m.publicKey}
               contentContainerStyle={[ps.memberList, { paddingBottom: insets.bottom + 16 }]}
-              ListHeaderComponent={
-                <TouchableOpacity
-                  style={ps.inviteCard}
-                  onPress={() => { onClose(); onNavigateInvite(); }}
-                >
-                  <View style={ps.inviteIconBox}>
-                    <UserPlus size={20} color="#fff" />
-                  </View>
-                  <Text style={ps.inviteLabel}>Invite Members</Text>
-                  <ChevronRight size={20} color="#444" />
-                </TouchableOpacity>
-              }
               ListEmptyComponent={
                 <View style={ps.center}>
                   <Text style={ps.emptyText}>No members yet</Text>
                 </View>
               }
               renderItem={({ item: m }) => (
-                <TouchableOpacity style={ps.memberRow} onPress={() => handleMemberPress(m)}>
-                  <View style={ps.memberAvatar}>
-                    <Text style={ps.memberInitials}>{m.publicKey.slice(0, 2).toUpperCase()}</Text>
-                  </View>
+                <TouchableOpacity
+                  style={ps.memberRow}
+                  onPress={() => handleMemberPress(m)}
+                  onLongPress={() => handleMemberLongPress(m)}
+                >
+                  {profileCache[m.publicKey]?.avatarBlobId ? (
+                    <BlobImage blobHash={profileCache[m.publicKey].avatarBlobId!} style={ps.memberAvatarImg} />
+                  ) : (
+                    <View style={ps.memberAvatar}>
+                      <Text style={ps.memberInitials}>
+                        {(profileCache[m.publicKey]?.username ?? m.publicKey).slice(0, 2).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                   <View style={ps.memberInfo}>
-                    <Text style={ps.memberKey}>{m.publicKey.slice(0, 20)}…</Text>
-                    <Text style={ps.memberJoined}>
-                      Joined {new Date(m.joinedAt).toLocaleDateString()}
+                    <Text style={ps.memberName}>
+                      {profileCache[m.publicKey]?.username ?? `${m.publicKey.slice(0, 14)}…`}
                     </Text>
-                  </View>
-                  <View style={[ps.badge, BADGE_BG[m.accessLevel] && { backgroundColor: BADGE_BG[m.accessLevel] }]}>
-                    <Text style={ps.badgeText}>{m.accessLevel}</Text>
+                    <Text style={ps.memberJoined}>
+                      {isAdminAccess(m.accessLevel) ? 'Admin • ' : ''}Joined {new Date(m.joinedAt).toLocaleDateString()}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               )}
@@ -366,10 +415,6 @@ export function OrgSearchPanel({ visible, orgId, rooms, activeRoomName, onClose,
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
-
-const BADGE_BG: Record<string, string> = {
-  Pull: '#374151', Read: '#1e40af', Write: '#7c3aed', Manage: '#dc2626',
-};
 
 const ps = StyleSheet.create({
   root:      { flex: 1, backgroundColor: '#0a0a0a' },
@@ -396,6 +441,7 @@ const ps = StyleSheet.create({
   chipRow:    { paddingHorizontal: 12, gap: 6, alignItems: 'center' },
   chip:       { backgroundColor: '#1e3a8a', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, flexDirection: 'row', alignItems: 'center' },
   chipText:   { color: '#93c5fd', fontSize: 12, fontWeight: '600' },
+  chipCloseIcon: { marginLeft: 5 },
 
   // Autocomplete
   autoRow:   { borderBottomWidth: 1, borderBottomColor: '#181818', paddingVertical: 6 },
@@ -425,17 +471,6 @@ const ps = StyleSheet.create({
 
   // Members
   memberList:   { padding: 12 },
-  inviteCard: {
-    backgroundColor: '#111', borderRadius: 12,
-    padding: 14, flexDirection: 'row', alignItems: 'center',
-    marginBottom: 20, borderWidth: 1, borderColor: '#1c1c1c',
-  },
-  inviteIconBox: {
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: '#1e3a8a',
-    alignItems: 'center', justifyContent: 'center', marginRight: 14,
-  },
-  inviteLabel: { flex: 1, color: '#fff', fontSize: 15, fontWeight: '700' },
 
   memberRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4 },
   memberAvatar:  {
@@ -443,10 +478,9 @@ const ps = StyleSheet.create({
     backgroundColor: '#1e3a8a',
     alignItems: 'center', justifyContent: 'center', marginRight: 12,
   },
+  memberAvatarImg: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
   memberInitials: { color: '#fff', fontSize: 15, fontWeight: '700' },
   memberInfo:    { flex: 1 },
-  memberKey:     { color: '#fff', fontSize: 13, fontWeight: '500', marginBottom: 2 },
+  memberName:    { color: '#fff', fontSize: 14, fontWeight: '600', marginBottom: 2 },
   memberJoined:  { color: '#555', fontSize: 11 },
-  badge:         { borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#374151' },
-  badgeText:     { color: '#fff', fontSize: 10, fontWeight: '700' },
 });

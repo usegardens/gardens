@@ -162,6 +162,7 @@ export function InterestsSheet(props: SheetProps<'interests-sheet'>) {
     <ActionSheet
       id={props.sheetId}
       gestureEnabled={!saving}
+      useBottomSafeAreaPadding
       containerStyle={s.container}
       indicatorStyle={s.handle}
       onBeforeShow={onBeforeShow}

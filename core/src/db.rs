@@ -105,6 +105,17 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             PRIMARY KEY (event_id, member_key)
         );
 
+        CREATE TABLE IF NOT EXISTS org_admin_threads (
+            thread_id         TEXT PRIMARY KEY,
+            org_id            TEXT NOT NULL,
+            initiator_key     TEXT NOT NULL,
+            participant_key   TEXT NOT NULL,
+            admin_key         TEXT NOT NULL,
+            created_at        INTEGER NOT NULL,
+            last_message_at   INTEGER,
+            is_request        INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS org_user_cooldowns (
             org_id          TEXT NOT NULL,
             member_key      TEXT NOT NULL,
@@ -209,6 +220,21 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             PRIMARY KEY (org_id, member_key)
         );
 
+        -- Audit log for moderation actions
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id          TEXT NOT NULL,
+            moderator_key   TEXT NOT NULL,  -- Who performed the action
+            target_key      TEXT NOT NULL,  -- Who was affected
+            action_type     TEXT NOT NULL,  -- ban_member, kick_member, etc.
+            details         TEXT,           -- JSON or text details (e.g., permission level)
+            created_at      INTEGER NOT NULL,
+            UNIQUE(org_id, moderator_key, target_key, action_type, created_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_log_org ON audit_log(org_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target_key);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+
         CREATE TABLE IF NOT EXISTS ignored_keys (
             public_key  TEXT PRIMARY KEY,
             ignored_at  INTEGER NOT NULL
@@ -236,6 +262,23 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
     ] {
         let _ = sqlx::query(sql).execute(pool).await;
     }
+
+    // Create audit_log table for existing databases
+    let _ = sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS audit_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id          TEXT NOT NULL,
+            moderator_key   TEXT NOT NULL,
+            target_key      TEXT NOT NULL,
+            action_type     TEXT NOT NULL,
+            details         TEXT,
+            created_at      INTEGER NOT NULL,
+            UNIQUE(org_id, moderator_key, target_key, action_type, created_at)
+        )"#
+    ).execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_org ON audit_log(org_id)").execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target_key)").execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)").execute(pool).await;
 
     Ok(())
 }
@@ -411,6 +454,18 @@ pub struct DmThreadRow {
     pub thread_id: String,
     pub initiator_key: String,
     pub recipient_key: String,
+    pub created_at: i64,
+    pub last_message_at: Option<i64>,
+    pub is_request: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct OrgAdminThreadRow {
+    pub thread_id: String,
+    pub org_id: String,
+    pub initiator_key: String,
+    pub participant_key: String,
+    pub admin_key: String,
     pub created_at: i64,
     pub last_message_at: Option<i64>,
     pub is_request: bool,
@@ -839,6 +894,77 @@ pub async fn is_muted(
     Ok(count > 0)
 }
 
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub org_id: String,
+    pub moderator_key: String,
+    pub target_key: String,
+    pub action_type: String,
+    pub details: Option<String>,
+    pub created_at: i64,
+}
+
+pub async fn insert_audit_log(
+    pool: &SqlitePool,
+    org_id: &str,
+    moderator_key: &str,
+    target_key: &str,
+    action_type: &str,
+    details: Option<&str>,
+    created_at: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"INSERT INTO audit_log (org_id, moderator_key, target_key, action_type, details, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(org_id, moderator_key, target_key, action_type, created_at) DO NOTHING"#,
+    )
+    .bind(org_id)
+    .bind(moderator_key)
+    .bind(target_key)
+    .bind(action_type)
+    .bind(details)
+    .bind(created_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn list_audit_log(
+    pool: &SqlitePool,
+    org_id: &str,
+    limit: i64,
+) -> Result<Vec<AuditLogEntry>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT id, org_id, moderator_key, target_key, action_type, details, created_at
+           FROM audit_log
+           WHERE org_id = ?
+           ORDER BY created_at DESC
+           LIMIT ?"#,
+    )
+    .bind(org_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let entries = rows
+        .into_iter()
+        .map(|row| AuditLogEntry {
+            id: row.get("id"),
+            org_id: row.get("org_id"),
+            moderator_key: row.get("moderator_key"),
+            target_key: row.get("target_key"),
+            action_type: row.get("action_type"),
+            details: row.get("details"),
+            created_at: row.get("created_at"),
+        })
+        .collect();
+
+    Ok(entries)
+}
+
 // ─── Ignore (client-side user ignore list) ───────────────────────────────────
 
 pub async fn ignore_user(pool: &SqlitePool, public_key: &str, now: i64) -> Result<(), DbError> {
@@ -1169,6 +1295,13 @@ pub async fn insert_message(pool: &SqlitePool, row: &MessageRow) -> Result<(), D
         .bind(tid)
         .execute(pool)
         .await?;
+        sqlx::query(
+            "UPDATE org_admin_threads SET last_message_at = MAX(COALESCE(last_message_at, 0), ?) WHERE thread_id = ?",
+        )
+        .bind(row.timestamp)
+        .bind(tid)
+        .execute(pool)
+        .await?;
     }
 
     Ok(())
@@ -1282,6 +1415,25 @@ pub async fn insert_dm_thread(pool: &SqlitePool, row: &DmThreadRow) -> Result<()
     .bind(&row.thread_id)
     .bind(&row.initiator_key)
     .bind(&row.recipient_key)
+    .bind(row.created_at)
+    .bind(row.last_message_at)
+    .bind(if row.is_request { 1i64 } else { 0i64 })
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn insert_org_admin_thread(pool: &SqlitePool, row: &OrgAdminThreadRow) -> Result<(), DbError> {
+    sqlx::query(
+        r#"INSERT INTO org_admin_threads (thread_id, org_id, initiator_key, participant_key, admin_key, created_at, last_message_at, is_request)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(thread_id) DO UPDATE SET last_message_at = excluded.last_message_at, is_request = excluded.is_request"#,
+    )
+    .bind(&row.thread_id)
+    .bind(&row.org_id)
+    .bind(&row.initiator_key)
+    .bind(&row.participant_key)
+    .bind(&row.admin_key)
     .bind(row.created_at)
     .bind(row.last_message_at)
     .bind(if row.is_request { 1i64 } else { 0i64 })
@@ -1457,6 +1609,141 @@ pub async fn list_dm_threads(pool: &SqlitePool, my_key: &str) -> Result<Vec<DmTh
         .collect())
 }
 
+pub async fn list_org_admin_threads(
+    pool: &SqlitePool,
+    org_id: &str,
+    my_key: &str,
+) -> Result<Vec<OrgAdminThreadRow>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT thread_id, org_id, initiator_key, participant_key, admin_key, created_at, last_message_at, is_request
+           FROM org_admin_threads
+           WHERE org_id = ? AND (admin_key = ? OR participant_key = ?)
+           ORDER BY COALESCE(last_message_at, created_at) DESC"#,
+    )
+    .bind(org_id)
+    .bind(my_key)
+    .bind(my_key)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| OrgAdminThreadRow {
+            thread_id: r.get("thread_id"),
+            org_id: r.get("org_id"),
+            initiator_key: r.get("initiator_key"),
+            participant_key: r.get("participant_key"),
+            admin_key: r.get("admin_key"),
+            created_at: r.get("created_at"),
+            last_message_at: r.get("last_message_at"),
+            is_request: r.get::<i64, _>("is_request") != 0,
+        })
+        .collect())
+}
+
+pub async fn list_all_org_admin_threads(
+    pool: &SqlitePool,
+    org_id: &str,
+) -> Result<Vec<OrgAdminThreadRow>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT thread_id, org_id, initiator_key, participant_key, admin_key, created_at, last_message_at, is_request
+           FROM org_admin_threads
+           WHERE org_id = ?
+           ORDER BY COALESCE(last_message_at, created_at) DESC"#,
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| OrgAdminThreadRow {
+            thread_id: r.get("thread_id"),
+            org_id: r.get("org_id"),
+            initiator_key: r.get("initiator_key"),
+            participant_key: r.get("participant_key"),
+            admin_key: r.get("admin_key"),
+            created_at: r.get("created_at"),
+            last_message_at: r.get("last_message_at"),
+            is_request: r.get::<i64, _>("is_request") != 0,
+        })
+        .collect())
+}
+
+pub async fn list_my_org_admin_threads(
+    pool: &SqlitePool,
+    my_key: &str,
+) -> Result<Vec<OrgAdminThreadRow>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT thread_id, org_id, initiator_key, participant_key, admin_key, created_at, last_message_at, is_request
+           FROM org_admin_threads
+           WHERE admin_key = ? OR participant_key = ?
+           ORDER BY COALESCE(last_message_at, created_at) DESC"#,
+    )
+    .bind(my_key)
+    .bind(my_key)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| OrgAdminThreadRow {
+            thread_id: r.get("thread_id"),
+            org_id: r.get("org_id"),
+            initiator_key: r.get("initiator_key"),
+            participant_key: r.get("participant_key"),
+            admin_key: r.get("admin_key"),
+            created_at: r.get("created_at"),
+            last_message_at: r.get("last_message_at"),
+            is_request: r.get::<i64, _>("is_request") != 0,
+        })
+        .collect())
+}
+
+pub async fn get_membership_access_level(
+    pool: &SqlitePool,
+    org_id: &str,
+    member_key: &str,
+) -> Result<Option<String>, DbError> {
+    let row = sqlx::query("SELECT access_level FROM memberships WHERE org_id = ? AND member_key = ?")
+        .bind(org_id)
+        .bind(member_key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.get("access_level")))
+}
+
+pub async fn list_member_keys_by_access_level(
+    pool: &SqlitePool,
+    org_id: &str,
+    access_level: &str,
+) -> Result<Vec<String>, DbError> {
+    let rows = sqlx::query("SELECT member_key FROM memberships WHERE org_id = ? AND access_level = ?")
+        .bind(org_id)
+        .bind(access_level)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().map(|r| r.get("member_key")).collect())
+}
+
+/// List all members of an organization with their access levels.
+/// Used by the projector for permission validation.
+pub async fn list_org_members(
+    pool: &SqlitePool,
+    org_id: &str,
+) -> Result<Vec<(String, String)>, DbError> {
+    let rows = sqlx::query(
+        "SELECT member_key, access_level FROM memberships WHERE org_id = ?"
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?;
+    
+    Ok(rows.into_iter()
+        .map(|r| (r.get::<String, _>("member_key"), r.get::<String, _>("access_level")))
+        .collect())
+}
+
 /// Returns true if `initiator_key` has a prior relationship with `local_key`:
 /// an existing DM thread, or shared org membership.
 pub async fn is_known_sender(pool: &SqlitePool, initiator_key: &str, local_key: &str) -> Result<bool, DbError> {
@@ -1581,6 +1868,30 @@ pub async fn get_dm_thread(
         thread_id: r.get("thread_id"),
         initiator_key: r.get("initiator_key"),
         recipient_key: r.get("recipient_key"),
+        created_at: r.get("created_at"),
+        last_message_at: r.get("last_message_at"),
+        is_request: r.get::<i64, _>("is_request") != 0,
+    });
+    Ok(row)
+}
+
+pub async fn get_org_admin_thread(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Option<OrgAdminThreadRow>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT thread_id, org_id, initiator_key, participant_key, admin_key, created_at, last_message_at, is_request
+           FROM org_admin_threads WHERE thread_id = ?"#,
+    )
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await?
+    .map(|r| OrgAdminThreadRow {
+        thread_id: r.get("thread_id"),
+        org_id: r.get("org_id"),
+        initiator_key: r.get("initiator_key"),
+        participant_key: r.get("participant_key"),
+        admin_key: r.get("admin_key"),
         created_at: r.get("created_at"),
         last_message_at: r.get("last_message_at"),
         is_request: r.get::<i64, _>("is_request") != 0,

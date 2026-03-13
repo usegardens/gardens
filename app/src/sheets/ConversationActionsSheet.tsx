@@ -1,21 +1,29 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import ActionSheet, { SheetManager } from 'react-native-actions-sheet';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ConversationActionsSheetProps {
   sheetId: string;
   payload?: {
     title?: string;
     onDelete?: () => void;
+    actionLabel?: string;
   };
 }
 
 export function ConversationActionsSheet(props: ConversationActionsSheetProps) {
-  const { title, onDelete } = props.payload || {};
+  const { title, onDelete, actionLabel } = props.payload || {};
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 28 : 16);
 
   return (
-    <ActionSheet id={props.sheetId} containerStyle={styles.sheet}>
-      <View style={styles.container}>
+    <ActionSheet
+      id={props.sheetId}
+      useBottomSafeAreaPadding
+      containerStyle={[styles.sheet, { paddingBottom: bottomInset + 12 }]}
+    >
+      <View style={[styles.container, { paddingBottom: bottomInset + 8 }]}>
         {title ? <Text style={styles.title}>{title}</Text> : null}
         <TouchableOpacity
           style={styles.row}
@@ -24,7 +32,7 @@ export function ConversationActionsSheet(props: ConversationActionsSheetProps) {
             onDelete?.();
           }}
         >
-          <Text style={styles.rowTextDanger}>Delete conversation</Text>
+          <Text style={styles.rowTextDanger}>{actionLabel ?? 'Delete conversation'}</Text>
         </TouchableOpacity>
       </View>
     </ActionSheet>

@@ -87,7 +87,7 @@ export function Layout({ children, title, description, ogType = 'website', appUr
         <footer class="footer">
           <img src="/icon.png" alt="Gardens" style={{ width: 20, height: 20, verticalAlign: 'middle', marginRight: 4 }} />
           <span>Powered by </span>
-          <a href="https://gardens.app">Gardens</a>
+          <a href="https://www.usegardens.com" target="_blank">Gardens</a>
           <span> • Decentralized messaging</span>
         </footer>
       </body>

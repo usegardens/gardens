@@ -661,6 +661,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_gardens_core_checksum_func_create_org(
     ): Short
+    external fun uniffi_gardens_core_checksum_func_create_org_admin_thread(
+    ): Short
     external fun uniffi_gardens_core_checksum_func_create_room(
     ): Short
     external fun uniffi_gardens_core_checksum_func_delete_conversation(
@@ -680,6 +682,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_gardens_core_checksum_func_get_blob(
     ): Short
     external fun uniffi_gardens_core_checksum_func_get_connection_status(
+    ): Short
+    external fun uniffi_gardens_core_checksum_func_get_mute_expiration(
     ): Short
     external fun uniffi_gardens_core_checksum_func_get_my_profile(
     ): Short
@@ -711,11 +715,17 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_gardens_core_checksum_func_init_sync(
     ): Short
+    external fun uniffi_gardens_core_checksum_func_is_muted(
+    ): Short
     external fun uniffi_gardens_core_checksum_func_is_network_initialized(
+    ): Short
+    external fun uniffi_gardens_core_checksum_func_join_public_org(
     ): Short
     external fun uniffi_gardens_core_checksum_func_kick_member(
     ): Short
     external fun uniffi_gardens_core_checksum_func_leave_org(
+    ): Short
+    external fun uniffi_gardens_core_checksum_func_list_audit_log(
     ): Short
     external fun uniffi_gardens_core_checksum_func_list_dm_threads(
     ): Short
@@ -727,7 +737,11 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_gardens_core_checksum_func_list_messages(
     ): Short
+    external fun uniffi_gardens_core_checksum_func_list_my_org_admin_threads(
+    ): Short
     external fun uniffi_gardens_core_checksum_func_list_my_orgs(
+    ): Short
+    external fun uniffi_gardens_core_checksum_func_list_org_admin_threads(
     ): Short
     external fun uniffi_gardens_core_checksum_func_list_org_members(
     ): Short
@@ -809,7 +823,7 @@ external fun uniffi_gardens_core_fn_func_add_reaction(`messageId`: RustBuffer.By
 external fun uniffi_gardens_core_fn_func_archive_room(`orgId`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_gardens_core_fn_func_ban_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_build_onion_packet(`hops`: RustBuffer.ByValue,`topicId`: RustBuffer.ByValue,`op`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_change_member_permission(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`newAccessLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -825,6 +839,8 @@ external fun uniffi_gardens_core_fn_func_create_event(`orgId`: RustBuffer.ByValu
 external fun uniffi_gardens_core_fn_func_create_or_update_profile(`username`: RustBuffer.ByValue,`bio`: RustBuffer.ByValue,`availableFor`: RustBuffer.ByValue,`isPublic`: Byte,`avatarBlobId`: RustBuffer.ByValue,`emailEnabled`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_gardens_core_fn_func_create_org(`name`: RustBuffer.ByValue,`typeLabel`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`isPublic`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_create_org_admin_thread(`orgId`: RustBuffer.ByValue,`adminKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_room(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -846,6 +862,8 @@ external fun uniffi_gardens_core_fn_func_get_blob(`blobHash`: RustBuffer.ByValue
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_get_connection_status(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_get_mute_expiration(`orgId`: RustBuffer.ByValue,`memberKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Long
 external fun uniffi_gardens_core_fn_func_get_my_profile(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_get_node_id(uniffi_out_err: UniffiRustCallStatus, 
@@ -876,11 +894,17 @@ external fun uniffi_gardens_core_fn_func_init_network(`relayUrl`: RustBuffer.ByV
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_init_sync(`hops`: RustBuffer.ByValue,`syncUrl`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
+external fun uniffi_gardens_core_fn_func_is_muted(`orgId`: RustBuffer.ByValue,`memberKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
 external fun uniffi_gardens_core_fn_func_is_network_initialized(uniffi_out_err: UniffiRustCallStatus, 
 ): Byte
+external fun uniffi_gardens_core_fn_func_join_public_org(`orgId`: RustBuffer.ByValue,`orgPubkeyZ32`: RustBuffer.ByValue,`joinSigB64`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_kick_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_leave_org(`orgId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_list_audit_log(`orgId`: RustBuffer.ByValue,`limit`: Int,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_list_dm_threads(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -892,7 +916,11 @@ external fun uniffi_gardens_core_fn_func_list_iced_members(`orgId`: RustBuffer.B
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_list_messages(`roomId`: RustBuffer.ByValue,`dmThreadId`: RustBuffer.ByValue,`limit`: Int,`beforeTimestamp`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_list_my_org_admin_threads(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_list_my_orgs(uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_list_org_admin_threads(`orgId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_list_org_members(`orgId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -901,7 +929,7 @@ external fun uniffi_gardens_core_fn_func_list_reactions(`messageIds`: RustBuffer
 external fun uniffi_gardens_core_fn_func_list_rooms(`orgId`: RustBuffer.ByValue,`includeArchived`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_mute_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,`durationSeconds`: Long,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_peel_onion_layer(`packet`: RustBuffer.ByValue,`recipientSeedHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_prepare_outbound_email(`to`: RustBuffer.ByValue,`subject`: RustBuffer.ByValue,`bodyText`: RustBuffer.ByValue,`bodyHtml`: RustBuffer.ByValue,`replyToMessageId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -911,7 +939,7 @@ external fun uniffi_gardens_core_fn_func_provide_blob_to_peer(`blobHash`: RustBu
 external fun uniffi_gardens_core_fn_func_receive_onion_packet(uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_remove_member_from_org(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_remove_reaction(`messageId`: RustBuffer.ByValue,`emoji`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_request_blob_from_peer(`blobHash`: RustBuffer.ByValue,`peerPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -937,11 +965,11 @@ external fun uniffi_gardens_core_fn_func_transfer_org_ownership(`orgId`: RustBuf
 external fun uniffi_gardens_core_fn_func_unarchive_room(`orgId`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_gardens_core_fn_func_unban_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_unice_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): Unit
 external fun uniffi_gardens_core_fn_func_unmute_member(`orgId`: RustBuffer.ByValue,`memberPublicKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_update_event(`orgId`: RustBuffer.ByValue,`eventId`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`locationType`: RustBuffer.ByValue,`locationText`: RustBuffer.ByValue,`locationRoomId`: RustBuffer.ByValue,`startAt`: RustBuffer.ByValue,`endAt`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_update_org(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`typeLabel`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`avatarBlobId`: RustBuffer.ByValue,`coverBlobId`: RustBuffer.ByValue,`welcomeText`: RustBuffer.ByValue,`customEmojiJson`: RustBuffer.ByValue,`orgCooldownSecs`: RustBuffer.ByValue,`isPublic`: RustBuffer.ByValue,`emailEnabled`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1083,7 +1111,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_archive_room() != 12869.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_ban_member() != 52512.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_ban_member() != 29427.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_build_onion_packet() != 50851.toShort()) {
@@ -1108,6 +1136,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_create_org() != 56832.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_create_org_admin_thread() != 7434.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_create_room() != 23845.toShort()) {
@@ -1138,6 +1169,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_get_connection_status() != 22674.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_get_mute_expiration() != 35444.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_get_my_profile() != 38673.toShort()) {
@@ -1185,13 +1219,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_init_sync() != 43293.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_gardens_core_checksum_func_is_muted() != 53293.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_gardens_core_checksum_func_is_network_initialized() != 35610.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_kick_member() != 54535.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_join_public_org() != 6927.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_kick_member() != 55756.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_leave_org() != 8695.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_list_audit_log() != 59366.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_list_dm_threads() != 4384.toShort()) {
@@ -1209,7 +1252,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_list_messages() != 40390.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_gardens_core_checksum_func_list_my_org_admin_threads() != 62459.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_gardens_core_checksum_func_list_my_orgs() != 5125.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_list_org_admin_threads() != 5432.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_list_org_members() != 52195.toShort()) {
@@ -1221,7 +1270,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_list_rooms() != 17132.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_mute_member() != 16063.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_mute_member() != 42419.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_peel_onion_layer() != 21070.toShort()) {
@@ -1236,7 +1285,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_receive_onion_packet() != 34528.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_remove_member_from_org() != 4985.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_remove_member_from_org() != 26203.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_remove_reaction() != 27900.toShort()) {
@@ -1275,13 +1324,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_unarchive_room() != 3061.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_unban_member() != 17317.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_unban_member() != 24899.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_unice_member() != 57607.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_unmute_member() != 21919.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_unmute_member() != 12435.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_update_event() != 47964.toShort()) {
@@ -1557,6 +1606,69 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
     override fun write(value: ByteArray, buf: ByteBuffer) {
         buf.putInt(value.size)
         buf.put(value)
+    }
+}
+
+
+
+data class AuditLogEntry (
+    var `id`: kotlin.Long
+    , 
+    var `orgId`: kotlin.String
+    , 
+    var `moderatorKey`: kotlin.String
+    , 
+    var `targetKey`: kotlin.String
+    , 
+    var `actionType`: kotlin.String
+    , 
+    var `details`: kotlin.String?
+    , 
+    var `createdAt`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAuditLogEntry: FfiConverterRustBuffer<AuditLogEntry> {
+    override fun read(buf: ByteBuffer): AuditLogEntry {
+        return AuditLogEntry(
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AuditLogEntry) = (
+            FfiConverterLong.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`orgId`) +
+            FfiConverterString.allocationSize(value.`moderatorKey`) +
+            FfiConverterString.allocationSize(value.`targetKey`) +
+            FfiConverterString.allocationSize(value.`actionType`) +
+            FfiConverterOptionalString.allocationSize(value.`details`) +
+            FfiConverterLong.allocationSize(value.`createdAt`)
+    )
+
+    override fun write(value: AuditLogEntry, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`id`, buf)
+            FfiConverterString.write(value.`orgId`, buf)
+            FfiConverterString.write(value.`moderatorKey`, buf)
+            FfiConverterString.write(value.`targetKey`, buf)
+            FfiConverterString.write(value.`actionType`, buf)
+            FfiConverterOptionalString.write(value.`details`, buf)
+            FfiConverterLong.write(value.`createdAt`, buf)
     }
 }
 
@@ -2150,6 +2262,74 @@ public object FfiConverterTypeOnionPeeled: FfiConverterRustBuffer<OnionPeeled> {
 
 
 
+data class OrgAdminThread (
+    var `threadId`: kotlin.String
+    , 
+    var `orgId`: kotlin.String
+    , 
+    var `initiatorKey`: kotlin.String
+    , 
+    var `participantKey`: kotlin.String
+    , 
+    var `adminKey`: kotlin.String
+    , 
+    var `createdAt`: kotlin.Long
+    , 
+    var `lastMessageAt`: kotlin.Long?
+    , 
+    var `isRequest`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOrgAdminThread: FfiConverterRustBuffer<OrgAdminThread> {
+    override fun read(buf: ByteBuffer): OrgAdminThread {
+        return OrgAdminThread(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: OrgAdminThread) = (
+            FfiConverterString.allocationSize(value.`threadId`) +
+            FfiConverterString.allocationSize(value.`orgId`) +
+            FfiConverterString.allocationSize(value.`initiatorKey`) +
+            FfiConverterString.allocationSize(value.`participantKey`) +
+            FfiConverterString.allocationSize(value.`adminKey`) +
+            FfiConverterLong.allocationSize(value.`createdAt`) +
+            FfiConverterOptionalLong.allocationSize(value.`lastMessageAt`) +
+            FfiConverterBoolean.allocationSize(value.`isRequest`)
+    )
+
+    override fun write(value: OrgAdminThread, buf: ByteBuffer) {
+            FfiConverterString.write(value.`threadId`, buf)
+            FfiConverterString.write(value.`orgId`, buf)
+            FfiConverterString.write(value.`initiatorKey`, buf)
+            FfiConverterString.write(value.`participantKey`, buf)
+            FfiConverterString.write(value.`adminKey`, buf)
+            FfiConverterLong.write(value.`createdAt`, buf)
+            FfiConverterOptionalLong.write(value.`lastMessageAt`, buf)
+            FfiConverterBoolean.write(value.`isRequest`, buf)
+    }
+}
+
+
+
 data class OrgSummary (
     var `orgId`: kotlin.String
     , 
@@ -2261,6 +2441,10 @@ data class PkarrResolved (
     var `publicKey`: kotlin.String
     , 
     var `email`: kotlin.Boolean
+    , 
+    var `orgId`: kotlin.String?
+    , 
+    var `joinSig`: kotlin.String?
     
 ){
     
@@ -2286,6 +2470,8 @@ public object FfiConverterTypePkarrResolved: FfiConverterRustBuffer<PkarrResolve
             FfiConverterOptionalString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -2298,7 +2484,9 @@ public object FfiConverterTypePkarrResolved: FfiConverterRustBuffer<PkarrResolve
             FfiConverterOptionalString.allocationSize(value.`avatarBlobId`) +
             FfiConverterOptionalString.allocationSize(value.`coverBlobId`) +
             FfiConverterString.allocationSize(value.`publicKey`) +
-            FfiConverterBoolean.allocationSize(value.`email`)
+            FfiConverterBoolean.allocationSize(value.`email`) +
+            FfiConverterOptionalString.allocationSize(value.`orgId`) +
+            FfiConverterOptionalString.allocationSize(value.`joinSig`)
     )
 
     override fun write(value: PkarrResolved, buf: ByteBuffer) {
@@ -2311,6 +2499,8 @@ public object FfiConverterTypePkarrResolved: FfiConverterRustBuffer<PkarrResolve
             FfiConverterOptionalString.write(value.`coverBlobId`, buf)
             FfiConverterString.write(value.`publicKey`, buf)
             FfiConverterBoolean.write(value.`email`, buf)
+            FfiConverterOptionalString.write(value.`orgId`, buf)
+            FfiConverterOptionalString.write(value.`joinSig`, buf)
     }
 }
 
@@ -3333,6 +3523,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeAuditLogEntry: FfiConverterRustBuffer<List<AuditLogEntry>> {
+    override fun read(buf: ByteBuffer): List<AuditLogEntry> {
+        val len = buf.getInt()
+        return List<AuditLogEntry>(len) {
+            FfiConverterTypeAuditLogEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AuditLogEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAuditLogEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AuditLogEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAuditLogEntry.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeDmThread: FfiConverterRustBuffer<List<DmThread>> {
     override fun read(buf: ByteBuffer): List<DmThread> {
         val len = buf.getInt()
@@ -3529,6 +3747,34 @@ public object FfiConverterSequenceTypeOnionHopFfi: FfiConverterRustBuffer<List<O
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeOrgAdminThread: FfiConverterRustBuffer<List<OrgAdminThread>> {
+    override fun read(buf: ByteBuffer): List<OrgAdminThread> {
+        val len = buf.getInt()
+        return List<OrgAdminThread>(len) {
+            FfiConverterTypeOrgAdminThread.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<OrgAdminThread>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeOrgAdminThread.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<OrgAdminThread>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeOrgAdminThread.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeOrgSummary: FfiConverterRustBuffer<List<OrgSummary>> {
     override fun read(buf: ByteBuffer): List<OrgSummary> {
         val len = buf.getInt()
@@ -3680,14 +3926,15 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     
     
 
-    @Throws(AuthException::class) fun `banMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
-        = 
+    @Throws(AuthException::class) fun `banMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_ban_member(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(OnionException::class) fun `buildOnionPacket`(`hops`: List<OnionHopFfi>, `topicId`: kotlin.ByteArray, `op`: kotlin.ByteArray): kotlin.ByteArray {
@@ -3771,6 +4018,17 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     UniffiLib.uniffi_gardens_core_fn_func_create_org(
     
         FfiConverterString.lower(`name`),FfiConverterString.lower(`typeLabel`),FfiConverterOptionalString.lower(`description`),FfiConverterBoolean.lower(`isPublic`),_status)
+}
+    )
+    }
+    
+
+    @Throws(CoreException::class) fun `createOrgAdminThread`(`orgId`: kotlin.String, `adminKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
+    uniffiRustCallWithError(CoreException) { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_create_org_admin_thread(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`adminKey`),_status)
 }
     )
     }
@@ -3881,6 +4139,16 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     UniffiLib.uniffi_gardens_core_fn_func_get_connection_status(
     
         _status)
+}
+    )
+    }
+    
+ fun `getMuteExpiration`(`orgId`: kotlin.String, `memberKey`: kotlin.String): kotlin.Long {
+            return FfiConverterLong.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_get_mute_expiration(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberKey`),_status)
 }
     )
     }
@@ -4056,6 +4324,16 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
 }
     
     
+ fun `isMuted`(`orgId`: kotlin.String, `memberKey`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_is_muted(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberKey`),_status)
+}
+    )
+    }
+    
 
         /**
          * Check if the network is initialized.
@@ -4070,14 +4348,26 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
-    @Throws(AuthException::class) fun `kickMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
-        = 
+    @Throws(AuthException::class) fun `joinPublicOrg`(`orgId`: kotlin.String, `orgPubkeyZ32`: kotlin.String, `joinSigB64`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_join_public_org(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`orgPubkeyZ32`),FfiConverterString.lower(`joinSigB64`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuthException::class) fun `kickMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_kick_member(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(CoreException::class) fun `leaveOrg`(`orgId`: kotlin.String): SendResult {
@@ -4086,6 +4376,16 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     UniffiLib.uniffi_gardens_core_fn_func_leave_org(
     
         FfiConverterString.lower(`orgId`),_status)
+}
+    )
+    }
+    
+ fun `listAuditLog`(`orgId`: kotlin.String, `limit`: kotlin.UInt): List<AuditLogEntry> {
+            return FfiConverterSequenceTypeAuditLogEntry.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_list_audit_log(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterUInt.lower(`limit`),_status)
 }
     )
     }
@@ -4140,12 +4440,32 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     )
     }
     
+ fun `listMyOrgAdminThreads`(): List<OrgAdminThread> {
+            return FfiConverterSequenceTypeOrgAdminThread.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_list_my_org_admin_threads(
+    
+        _status)
+}
+    )
+    }
+    
  fun `listMyOrgs`(): List<OrgSummary> {
             return FfiConverterSequenceTypeOrgSummary.lift(
     uniffiRustCall() { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_list_my_orgs(
     
         _status)
+}
+    )
+    }
+    
+ fun `listOrgAdminThreads`(`orgId`: kotlin.String): List<OrgAdminThread> {
+            return FfiConverterSequenceTypeOrgAdminThread.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_list_org_admin_threads(
+    
+        FfiConverterString.lower(`orgId`),_status)
 }
     )
     }
@@ -4181,14 +4501,15 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
-    @Throws(AuthException::class) fun `muteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String, `durationSeconds`: kotlin.Long)
-        = 
+    @Throws(AuthException::class) fun `muteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String, `durationSeconds`: kotlin.Long): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_mute_member(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),FfiConverterLong.lower(`durationSeconds`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(OnionException::class) fun `peelOnionLayer`(`packet`: kotlin.ByteArray, `recipientSeedHex`: kotlin.String): OnionPeeled {
@@ -4239,14 +4560,15 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
-    @Throws(AuthException::class) fun `removeMemberFromOrg`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
-        = 
+    @Throws(AuthException::class) fun `removeMemberFromOrg`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_remove_member_from_org(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(CoreException::class) fun `removeReaction`(`messageId`: kotlin.String, `emoji`: kotlin.String): SendResult {
@@ -4386,14 +4708,15 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     
     
 
-    @Throws(AuthException::class) fun `unbanMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
-        = 
+    @Throws(AuthException::class) fun `unbanMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_unban_member(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(AuthException::class) fun `uniceMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
@@ -4406,14 +4729,15 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     
     
 
-    @Throws(AuthException::class) fun `unmuteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String)
-        = 
+    @Throws(AuthException::class) fun `unmuteMember`(`orgId`: kotlin.String, `memberPublicKey`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
     uniffiRustCallWithError(AuthException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_unmute_member(
     
         FfiConverterString.lower(`orgId`),FfiConverterString.lower(`memberPublicKey`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(CoreException::class) fun `updateEvent`(`orgId`: kotlin.String, `eventId`: kotlin.String, `title`: kotlin.String?, `description`: kotlin.String?, `locationType`: kotlin.String?, `locationText`: kotlin.String?, `locationRoomId`: kotlin.String?, `startAt`: kotlin.Long?, `endAt`: kotlin.Long?): kotlin.ByteArray {

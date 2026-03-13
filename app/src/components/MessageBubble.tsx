@@ -110,13 +110,14 @@ export function MessageBubble({ message, isOwnMessage, avatarBlobId, onReply, on
           {message.contentType === 'image' && message.blobId && (
             <BlobImage
               blobHash={message.blobId}
-              roomId={message.roomId ?? null}
+              roomId={message.roomId ?? message.dmThreadId ?? null}
+              peerPublicKey={message.authorKey}
               style={styles.mediaBlobImage}
             />
           )}
 
           {message.contentType === 'audio' && message.blobId && (
-            <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? null} />
+            <AudioMessage blobHash={message.blobId} roomId={message.roomId ?? message.dmThreadId ?? null} />
           )}
 
           {message.contentType === 'gif' && message.embedUrl && (

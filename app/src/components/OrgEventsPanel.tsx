@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,8 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import QRCode from 'react-native-qrcode-svg';
-import { Calendar, MapPin, Hash, Share2, Check, X, Pencil, Trash2 } from 'lucide-react-native';
-import { createEvent, listEvents, listEventRsvps, setEventRsvp, clearEventRsvp, generateInviteToken, updateEvent, deleteEvent } from '../ffi/gardensCore';
+import { Calendar, MapPin, Hash, Check, X, Pencil, Trash2 } from 'lucide-react-native';
+import { createEvent, listEvents, listEventRsvps, setEventRsvp, clearEventRsvp, updateEvent, deleteEvent } from '../ffi/gardensCore';
 import type { Event, EventRsvp, Room } from '../ffi/gardensCore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { broadcastOp, useSyncStore } from '../stores/useSyncStore';
@@ -45,7 +44,7 @@ function parseDateTime(dateStr: string, timeStr: string): Date | null {
   return new Date(y, m - 1, d, hh, mm, 0, 0);
 }
 
-export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
+export function OrgEventsPanel({ orgId, orgName: _orgName, rooms }: Props) {
   const keypair = useAuthStore(s => s.keypair);
   const myKey = keypair?.publicKeyHex ?? '';
 
@@ -67,25 +66,10 @@ export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
   const [endTime, setEndTime] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const [qrOpen, setQrOpen] = useState(false);
-  const [qrToken, setQrToken] = useState<string | null>(null);
-
   const roomOptions = useMemo(() => rooms.filter(r => !r.isArchived), [rooms]);
   const { subscribe: syncSubscribe, unsubscribe: syncUnsubscribe, opTick } = useSyncStore();
 
-  useEffect(() => {
-    refresh();
-    syncSubscribe(orgId);
-    return () => syncUnsubscribe(orgId);
-  }, [orgId]);
-
-  // Re-fetch when an op arrives for this org's topic
-  useEffect(() => {
-    if (opTick > 0) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opTick]);
-
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const next = await listEvents(orgId);
@@ -99,7 +83,18 @@ export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [orgId]);
+
+  useEffect(() => {
+    refresh();
+    syncSubscribe(orgId);
+    return () => syncUnsubscribe(orgId);
+  }, [orgId, refresh, syncSubscribe, syncUnsubscribe]);
+
+  // Re-fetch when an op arrives for this org's topic
+  useEffect(() => {
+    if (opTick > 0) refresh();
+  }, [opTick, refresh]);
 
   function openCreate() {
     const now = new Date();
@@ -241,17 +236,6 @@ export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
     }
   }
 
-  function openQrInvite() {
-    try {
-      const expiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
-      const token = generateInviteToken(orgId, 'Read', expiry);
-      setQrToken(token);
-      setQrOpen(true);
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to generate invite');
-    }
-  }
-
   function formatDateTime(micros: number) {
     const dt = new Date(micros / 1000);
     return dt.toLocaleString();
@@ -313,9 +297,6 @@ export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
                   <View style={s.countPill}>
                     <Text style={s.countText}>{interestedCount}</Text>
                   </View>
-                  <TouchableOpacity style={s.shareBtn} onPress={openQrInvite}>
-                    <Share2 size={16} color="#c9ced8" />
-                  </TouchableOpacity>
                   <TouchableOpacity style={s.iconBtn} onPress={() => openEdit(ev)}>
                     <Pencil size={16} color="#c9ced8" />
                   </TouchableOpacity>
@@ -571,27 +552,6 @@ export function OrgEventsPanel({ orgId, orgName, rooms }: Props) {
         </View>
       </Modal>
 
-      {/* QR Invite modal */}
-      <Modal visible={qrOpen} animationType="fade" transparent>
-        <View style={s.modalBackdrop}>
-          <View style={s.qrCard}>
-            <View style={s.qrHeader}>
-              <Text style={s.qrTitle}>Invite by QR Code</Text>
-              <TouchableOpacity onPress={() => setQrOpen(false)}>
-                <X size={18} color="#a7acb8" />
-              </TouchableOpacity>
-            </View>
-            {qrToken && (
-              <>
-                <View style={s.qrWrap}>
-                  <QRCode value={qrToken} size={220} backgroundColor="#fff" />
-                </View>
-                <Text style={s.qrCaption}>Scan the QR Code to join {orgName}</Text>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -621,7 +581,6 @@ const s = StyleSheet.create({
   interestedTextActive: { color: '#0b0b0b' },
   countPill: { backgroundColor: '#1f2430', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
   countText: { color: '#c9ced8', fontSize: 12, fontWeight: '700' },
-  shareBtn: { marginLeft: 'auto', width: 34, height: 34, borderRadius: 17, backgroundColor: '#1f2430', alignItems: 'center', justifyContent: 'center' },
   iconBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#1f2430', alignItems: 'center', justifyContent: 'center' },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 16 },
@@ -660,10 +619,4 @@ const s = StyleSheet.create({
   previewTime: { color: '#9aa1ad', fontSize: 12, marginBottom: 6 },
   previewTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
   previewLocation: { color: '#8b93a1', fontSize: 13, marginTop: 8 },
-
-  qrCard: { backgroundColor: '#121418', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1f2430', alignItems: 'center' },
-  qrHeader: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  qrTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  qrWrap: { backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12 },
-  qrCaption: { color: '#8b93a1', fontSize: 12, textAlign: 'center' },
 });

@@ -8,15 +8,14 @@ import { BackupSeedSheet } from './BackupSeedSheet';
 import { ExportDataSheet } from './ExportDataSheet';
 import { DeleteAccountSheet } from './DeleteAccountSheet';
 import { MemberActionsSheet } from './MemberActionsSheet';
+import { MemberModerationSheet } from './MemberModerationSheet';
 import { EditOrgSheet } from './EditOrgSheet';
 import { MessageActionsSheet } from './MessageActionsSheet';
 import { ConversationActionsSheet } from './ConversationActionsSheet';
 import { EmojiPickerSheet } from './EmojiPickerSheet';
-import { ComposeEmailSheet } from './ComposeEmailSheet';
-import { EmailDetailSheet } from './EmailDetailSheet';
 import { LocationPickerSheet } from './LocationPickerSheet';
 import { InterestsSheet } from './InterestsSheet';
-import type { InboxEmail } from '../stores/useInboxStore';
+import { JoinOrgSheet } from './JoinOrgSheet';
 
 registerSheet('attach-sheet', AttachSheet);
 registerSheet('profile-sheet', ProfileSheet);
@@ -27,14 +26,14 @@ registerSheet('backup-seed-sheet', BackupSeedSheet);
 registerSheet('export-data-sheet', ExportDataSheet);
 registerSheet('delete-account-sheet', DeleteAccountSheet);
 registerSheet('member-actions-sheet', MemberActionsSheet);
+registerSheet('member-moderation-sheet', MemberModerationSheet);
 registerSheet('edit-org-sheet', EditOrgSheet);
 registerSheet('message-actions-sheet', MessageActionsSheet);
 registerSheet('conversation-actions-sheet', ConversationActionsSheet);
 registerSheet('emoji-picker-sheet', EmojiPickerSheet);
-registerSheet('compose-email-sheet', ComposeEmailSheet);
-registerSheet('email-detail-sheet', EmailDetailSheet);
 registerSheet('location-picker-sheet', LocationPickerSheet);
 registerSheet('interests-sheet', InterestsSheet);
+registerSheet('join-org-sheet', JoinOrgSheet);
 
 declare module 'react-native-actions-sheet' {
   interface Sheets {
@@ -47,14 +46,14 @@ declare module 'react-native-actions-sheet' {
     'export-data-sheet': SheetDefinition;
     'delete-account-sheet': SheetDefinition;
     'member-actions-sheet': SheetDefinition;
+    'member-moderation-sheet': SheetDefinition;
     'edit-org-sheet': SheetDefinition;
     'message-actions-sheet': SheetDefinition;
-    'conversation-actions-sheet': SheetDefinition<{ payload: { title?: string; onDelete?: () => void } }>;
+    'conversation-actions-sheet': SheetDefinition<{ payload: { title?: string; onDelete?: () => void; actionLabel?: string } }>;
     'emoji-picker-sheet': SheetDefinition;
-    'compose-email-sheet': SheetDefinition<{ payload: { to?: string; subject?: string; replyToMessageId?: string } }>;
-    'email-detail-sheet': SheetDefinition<{ payload: InboxEmail }>;
     'location-picker-sheet': SheetDefinition;
     'interests-sheet': SheetDefinition;
+    'join-org-sheet': SheetDefinition;
   }
 }
 

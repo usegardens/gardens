@@ -11,7 +11,7 @@ export interface OutboundEmailPayload {
   timestamp: number;
 }
 
-const RELAY_DOMAIN = 'gardens-relay.stereos.workers.dev';
+const RELAY_DOMAIN = 'relay.usegardens.com';
 
 export function buildMime(payload: OutboundEmailPayload): string {
   const msg = createMimeMessage();
