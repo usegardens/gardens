@@ -176,10 +176,37 @@ export function MessageComposer({
         maxWidth: 1920,
         maxHeight: 1920,
         quality: 0.8,
+        selectionLimit: 10, // Allow multiple image/video selection
       });
-      const asset = result.assets?.[0];
-      if (!asset) return;
+      const assets = result.assets;
+      if (!assets || assets.length === 0) return;
 
+      // If multiple files selected, send as multi-image message
+      if (assets.length > 1) {
+        for (const asset of assets) {
+          const isVideo = asset.type?.startsWith('video') ?? false;
+          if (isVideo) continue; // Skip videos in multi-select
+          
+          const mimeType = asset.type ?? 'image/jpeg';
+          let bytes: Uint8Array;
+          if (asset.base64) {
+            bytes = base64ToBytes(asset.base64);
+          } else if (asset.uri) {
+            const base64Data = await RNFS.readFile(asset.uri, 'base64');
+            bytes = base64ToBytes(base64Data);
+          } else {
+            continue;
+          }
+
+          const blobId = await uploadBlob(bytes, mimeType, roomId);
+          // For multi-image, we send each as separate image message
+          onSendBlob?.(blobId, mimeType, 'image');
+        }
+        return;
+      }
+
+      // Single file - original behavior
+      const asset = assets[0];
       const isVideo = asset.type?.startsWith('video') ?? false;
       const mimeType = asset.type ?? (isVideo ? 'video/mp4' : 'image/jpeg');
       const contentType: 'image' | 'video' = isVideo ? 'video' : 'image';

@@ -4,6 +4,36 @@ import { broadcastOp } from './useSyncStore';
 import { setDmProfile } from './useDmProfileStore';
 import { useProfileStore } from './useProfileStore';
 
+// Base64 decode function compatible with React Native (atob not available)
+function base64ToBytes(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // Remove padding
+  const cleanBase64 = base64.replace(/=+$/, '');
+  const length = (cleanBase64.length * 6) >> 3;
+  const bytes = new Uint8Array(length);
+  let i: number, p = 0;
+  for (i = 0; i + 4 <= cleanBase64.length; i += 4) {
+    const enc1 = chars.indexOf(cleanBase64[i]);
+    const enc2 = chars.indexOf(cleanBase64[i + 1]);
+    const enc3 = chars.indexOf(cleanBase64[i + 2]);
+    const enc4 = chars.indexOf(cleanBase64[i + 3]);
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    bytes[p++] = ((enc3 & 3) << 6) | enc4;
+  }
+  const remaining = cleanBase64.length - i;
+  if (remaining >= 2) {
+    const enc1 = chars.indexOf(cleanBase64[i]);
+    const enc2 = chars.indexOf(cleanBase64[i + 1]);
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    if (remaining > 2) {
+      const enc3 = chars.indexOf(cleanBase64[i + 2]);
+      bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    }
+  }
+  return bytes;
+}
+
 export interface Message {
   messageId: string;
   roomId: string | null;
@@ -200,9 +230,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       return null;
     })();
     if (topic && result.opBytesBase64) {
-      const binary = atob(result.opBytesBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const bytes = base64ToBytes(result.opBytesBase64);
       broadcastOp(topic, bytes);
     }
     const updated = await listReactions([messageId]);

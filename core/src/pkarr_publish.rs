@@ -527,3 +527,15 @@ fn decrypt_org_privkey(encrypted: &[u8], user_privkey: &ed25519_dalek::SigningKe
     
     cipher.decrypt(nonce, encrypted).ok().and_then(|v: Vec<u8>| v.try_into().ok())
 }
+
+/// Compute the gossip topic ID for an organization.
+/// Returns Ok([u8; 32]) on success.
+pub fn topic_id_from_org_id(org_id: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(org_id).map_err(|e| format!("invalid org_id hex: {}", e))?;
+    if bytes.len() != 32 {
+        return Err("org_id must be 32 bytes".into());
+    }
+    let mut topic_id = [0u8; 32];
+    topic_id.copy_from_slice(&bytes);
+    Ok(topic_id)
+}

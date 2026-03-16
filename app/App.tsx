@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SheetProvider } from 'react-native-actions-sheet';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { DebugPanel } from './src/components/DebugPanel';
 import './src/sheets';
 import { setupBackgroundHandler } from './src/services/pushNotifications';
 
@@ -20,6 +21,7 @@ export default function App() {
           <NavigationContainer>
             <SheetProvider>
               <RootNavigator />
+              <DebugPanel />
             </SheetProvider>
           </NavigationContainer>
         </KeyboardProvider>

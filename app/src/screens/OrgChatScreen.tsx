@@ -38,6 +38,7 @@ import { BlobImage } from '../components/BlobImage';
 import { DefaultCoverShader } from '../components/DefaultCoverShader';
 import { parseCustomEmoji } from '../utils/customEmoji';
 import { sendReplyPushNotification } from '../services/pushNotifications';
+import { RoomType } from '../ffi/gardensCore';
 
 const DRAWER_WIDTH = 280;
 const EDGE_HIT_WIDTH = 20;
@@ -89,7 +90,7 @@ type Props = NativeStackScreenProps<any, 'OrgChat'>;
 export function OrgChatScreen({ route, navigation }: Props) {
   const { orgId, orgName, initialRoomId } = route.params as { orgId: string; orgName: string; initialRoomId?: string };
 
-  const { rooms, fetchRooms, createRoom, orgs } = useOrgsStore();
+  const { rooms, fetchRooms, createRoom, deleteRoom, orgs } = useOrgsStore();
   const org = orgs.find(o => o.orgId === orgId);
   const { messages, reactions, fetchMessages, sendMessage, deleteMessage, toggleReaction } = useMessagesStore();
   const { myProfile, profileCache, fetchProfile, profilePicUri } = useProfileStore();
@@ -113,6 +114,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
   const [isSearchOpen, setIsSearchOpen]     = useState(false);
   const [creatingRoom, setCreatingRoom]     = useState(false);
   const [newRoomName, setNewRoomName]       = useState('');
+  const [newRoomType, setNewRoomType]       = useState<RoomType>('text');
   const [roomBusy, setRoomBusy]             = useState(false);
   const [showWelcome, setShowWelcome]       = useState(false);
   const [icedMap, setIcedMap]               = useState<Record<string, number>>({});
@@ -163,6 +165,8 @@ export function OrgChatScreen({ route, navigation }: Props) {
   function openDrawer() {
     drawerIsOpen.current = true;
     setIsDrawerOpen(true);
+    // Refresh rooms when drawer opens to ensure fresh data
+    fetchRooms(orgId).catch(() => {});
     Animated.spring(drawerX, {
       toValue: 0,
       useNativeDriver: true,
@@ -581,12 +585,18 @@ export function OrgChatScreen({ route, navigation }: Props) {
 
   async function handleSubmitRoom() {
     if (!newRoomName.trim()) return;
+    // Voice channels are coming soon - only allow text channels
+    if (newRoomType !== 'text') {
+      Alert.alert('Coming Soon', 'Voice channels will be available in a future update.');
+      return;
+    }
     setRoomBusy(true);
     try {
       const name = newRoomName.trim();
-      const roomId = await createRoom(orgId, name);
+      const roomId = await createRoom(orgId, name, 'text');
       setCreatingRoom(false);
       setNewRoomName('');
+      setNewRoomType('text');
       await switchRoom(roomId, name);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to create channel');
@@ -648,6 +658,28 @@ export function OrgChatScreen({ route, navigation }: Props) {
             renderItem={({ item, index }) => {
               const prev = index > 0 ? messageList[index - 1] : null;
               const isGrouped = prev?.authorKey === item.authorKey;
+              
+              // Collect consecutive image messages from the same author for grid display
+              let imageGroup: typeof messageList = [];
+              if (item.contentType === 'image') {
+                imageGroup = [item];
+                // Look backward
+                let lookBack = index - 1;
+                while (lookBack >= 0 && 
+                       messageList[lookBack].authorKey === item.authorKey && 
+                       messageList[lookBack].contentType === 'image') {
+                  imageGroup.unshift(messageList[lookBack]);
+                  lookBack--;
+                }
+                // Look forward
+                let lookForward = index + 1;
+                while (lookForward < messageList.length && 
+                       messageList[lookForward].authorKey === item.authorKey && 
+                       messageList[lookForward].contentType === 'image') {
+                  imageGroup.push(messageList[lookForward]);
+                  lookForward++;
+                }
+              }
               const myPublicKey = myProfile?.publicKey ?? useAuthStore.getState().keypair?.publicKeyHex;
               const isOwn = !!myPublicKey && item.authorKey === myPublicKey;
               // For own messages prefer myProfile data; for others use the cache.
@@ -697,6 +729,7 @@ export function OrgChatScreen({ route, navigation }: Props) {
                   replyToPreview={replyToPreview}
                   reactions={summary}
                   customEmojis={customEmojis}
+                  imageGroup={imageGroup.length > 1 ? imageGroup : undefined}
                   onToggleReaction={async (emoji) => {
                     if (!myKey) return;
                     await toggleReaction(item.messageId, emoji, myKey, item.roomId);
@@ -930,15 +963,70 @@ export function OrgChatScreen({ route, navigation }: Props) {
 
               <Text style={s.sectionLabel}>CHANNELS</Text>
 
-              {orgRooms.map(room => (
+              {orgRooms.filter(r => r.roomType !== 'voice').map(room => (
                 <TouchableOpacity
                   key={room.roomId}
                   style={[s.channelRow, activeRoomId === room.roomId && s.channelRowActive]}
                   onPress={() => switchRoom(room.roomId, room.name)}
+                  onLongPress={() => {
+                    if (isAdmin) {
+                      SheetManager.show('channel-actions-sheet', {
+                        payload: {
+                          channelName: room.name,
+                          channelId: room.roomId,
+                          orgId,
+                          onOpenSettings: () => {
+                            navigation.navigate('ChannelSettings', { 
+                              orgId, 
+                              orgName, 
+                              roomId: room.roomId, 
+                              roomName: room.name 
+                            });
+                          },
+                          onDelete: () => {
+                            Alert.alert(
+                              'Delete Channel',
+                              `Are you sure you want to delete #${room.name}? This cannot be undone.`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                  text: 'Delete',
+                                  style: 'destructive',
+                                  onPress: async () => {
+                                    try {
+                                      await deleteRoom(orgId, room.roomId);
+                                      // If we deleted the active room, switch to another room or clear
+                                      if (activeRoomId === room.roomId) {
+                                        const remainingRooms = orgRooms.filter(r => r.roomId !== room.roomId);
+                                        if (remainingRooms.length > 0) {
+                                          const defaultRoom = remainingRooms.find(r => r.name === 'general') ?? remainingRooms[0];
+                                          await switchRoom(defaultRoom.roomId, defaultRoom.name);
+                                        } else {
+                                          setActiveRoomId(null);
+                                          setActiveRoomName('');
+                                        }
+                                      }
+                                    } catch (err: any) {
+                                      Alert.alert('Error', err.message || 'Failed to delete channel');
+                                    }
+                                  },
+                                },
+                              ],
+                            );
+                          },
+                        },
+                      });
+                    }
+                  }}
                 >
-                  <Text style={[s.channelText, activeRoomId === room.roomId && s.channelTextActive]}>
-                    # {room.name}
-                  </Text>
+                  <View style={s.channelRowContent}>
+                    <Text style={[s.channelText, activeRoomId === room.roomId && s.channelTextActive]}>
+                      #
+                    </Text>
+                    <Text style={[s.channelText, activeRoomId === room.roomId && s.channelTextActive]}>
+                      {room.name}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               ))}
 
@@ -974,18 +1062,35 @@ export function OrgChatScreen({ route, navigation }: Props) {
             editable={!roomBusy}
             onSubmitEditing={handleSubmitRoom}
           />
+          {/* Room type selector - Voice channels coming soon */}
+          <Text style={s.roomTypeLabel}>Channel Type</Text>
+          <View style={s.roomTypeRow}>
+            <TouchableOpacity
+              style={[s.roomTypeBtn, newRoomType === 'text' && s.roomTypeBtnActive]}
+              onPress={() => setNewRoomType('text')}
+            >
+              <Text style={[s.roomTypeText, newRoomType === 'text' && s.roomTypeTextActive]}>
+                💬 Text
+              </Text>
+            </TouchableOpacity>
+            <View style={[s.roomTypeBtn, s.roomTypeBtnDisabled]}>
+              <Text style={s.roomTypeTextDisabled}>
+                🎤 Voice (Soon)
+              </Text>
+            </View>
+          </View>
           <View style={s.modalActions}>
             <TouchableOpacity
               style={s.modalCancelBtn}
-              onPress={() => setCreatingRoom(false)}
+              onPress={() => { setCreatingRoom(false); setNewRoomName(''); setNewRoomType('text'); }}
               disabled={roomBusy}
             >
               <Text style={s.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={s.modalCreateBtn}
+              style={[s.modalCreateBtn, (!newRoomName.trim() || roomBusy || newRoomType !== 'text') && s.modalCreateBtnDisabled]}
               onPress={handleSubmitRoom}
-              disabled={roomBusy || !newRoomName.trim()}
+              disabled={roomBusy || !newRoomName.trim() || newRoomType !== 'text'}
             >
               {roomBusy
                 ? <ActivityIndicator color="#000" />
@@ -1148,4 +1253,16 @@ const s = StyleSheet.create({
   createConfirmBtnDisabled: { backgroundColor: '#1e3a5f', opacity: 0.6 },
   createConfirmText:{ color: '#fff', fontWeight: '700' },
 
+  // Room type picker
+  roomTypeLabel: { color: '#888', fontSize: 12, marginBottom: 8 },
+  roomTypeRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  roomTypeBtn: { flex: 1, backgroundColor: '#1a1a1a', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
+  roomTypeBtnActive: { backgroundColor: '#3b82f6', borderColor: '#3b82f6' },
+  roomTypeBtnDisabled: { backgroundColor: '#1a1a1a', borderColor: '#222', opacity: 0.5 },
+  roomTypeText: { color: '#888', fontSize: 14, fontWeight: '500' },
+  roomTypeTextActive: { color: '#fff' },
+  roomTypeTextDisabled: { color: '#555', fontSize: 14, fontWeight: '500' },
+  modalCreateBtnDisabled: { opacity: 0.5 },
+
 });
+

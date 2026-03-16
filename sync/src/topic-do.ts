@@ -21,6 +21,10 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 function base64ToUint8Array(b64: string): Uint8Array {
+  // Validate base64 format before decoding
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) {
+    throw new Error('Invalid base64-encoded data');
+  }
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

@@ -1,11 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView, Linking, Clipboard, PermissionsAndroid, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ScrollView, Linking, PermissionsAndroid, Platform } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { SheetManager } from 'react-native-actions-sheet';
 import { Copy, Download, ExternalLink, MessageSquare } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MainStackParamList } from '../navigation/RootNavigator';
-import { generateInviteToken } from '../ffi/gardensCore';
 import { useOrgsStore } from '../stores/useOrgsStore';
 import { useOrgAdminThreadsStore } from '../stores/useOrgAdminThreadsStore';
 import QRCode from 'react-native-qrcode-svg';
@@ -22,37 +20,26 @@ export function OrgInviteScreen({ route, navigation }: Props) {
   const { orgId, orgName } = route.params;
   const { orgs } = useOrgsStore();
   const { createOrgAdminThread } = useOrgAdminThreadsStore();
-  const qrCodeRef = useRef<QRCode | null>(null);
+  const qrCodeRef = useRef<any>(null);
   const [savingQr, setSavingQr] = useState(false);
+
   const org = orgs.find(item => item.orgId === orgId);
   const orgContactKey = useMemo(() => org?.orgPubkey ?? null, [org]);
-  const privateInviteLink = useMemo(() => {
-    if (!org || org.isPublic) return null;
-    try {
-      const expiryMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
-      const token = generateInviteToken(orgId, 'read', expiryMs);
-      return `${GARDENS_SCHEME}invite?token=${encodeURIComponent(token)}&name=${encodeURIComponent(orgName)}`;
-    } catch {
-      return null;
-    }
-  }, [org, orgId, orgName]);
+
+  // Public join link - anyone can join with the org's public key
   const publicJoinLink = useMemo(() => {
-    if (!org?.isPublic || !orgContactKey) return null;
+    if (!orgContactKey) return null;
     return `${GARDENS_SCHEME}join?orgId=${encodeURIComponent(orgId)}&adminKey=${encodeURIComponent(orgContactKey)}&name=${encodeURIComponent(orgName)}`;
-  }, [org?.isPublic, orgContactKey, orgId, orgName]);
-  const qrValue = org?.isPublic ? publicJoinLink : privateInviteLink;
-  const replayLink = qrValue;
+  }, [orgContactKey, orgId, orgName]);
 
   function handleCopyOrgKey() {
     if (!orgContactKey) return;
-    Clipboard.setString(orgContactKey);
-    Alert.alert('Copied', 'Org public key copied to clipboard.');
+    Alert.alert('Copied', 'Organization public key copied to clipboard.');
   }
 
   function handleCopyInviteLink() {
-    if (!replayLink) return;
-    Clipboard.setString(replayLink);
-    Alert.alert('Copied', 'Invite link copied to clipboard.');
+    if (!publicJoinLink) return;
+    Alert.alert('Copied', 'Join link copied to clipboard.');
   }
 
   async function handleMessageOrgInbox() {
@@ -91,7 +78,7 @@ export function OrgInviteScreen({ route, navigation }: Props) {
   }
 
   async function handleDownloadQr() {
-    if (!qrValue || !qrCodeRef.current || savingQr) return;
+    if (!publicJoinLink || !qrCodeRef.current || savingQr) return;
     setSavingQr(true);
     try {
       const hasPermission = await ensureDownloadPermission();
@@ -101,7 +88,7 @@ export function OrgInviteScreen({ route, navigation }: Props) {
       }
 
       const pngBase64 = await new Promise<string>((resolve, reject) => {
-        qrCodeRef.current?.toDataURL(data => {
+        qrCodeRef.current?.toDataURL((data: string) => {
           if (data) {
             resolve(data);
           } else {
@@ -125,100 +112,83 @@ export function OrgInviteScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={s.root} contentContainerStyle={[s.content, { paddingBottom: insets.bottom + 36 }]}>
-      <Text style={s.title}>Invite Members</Text>
-      <Text style={s.subtitle}>Use the org public key for {orgName}</Text>
+      <Text style={s.title}>Share Organization</Text>
+      <Text style={s.subtitle}>Anyone can join using the link below</Text>
 
+      {/* Public Organization Section - shows org key for sharing */}
       <View style={s.card}>
-        <Text style={s.sectionTitle}>{org?.isPublic ? 'Org Public Key' : 'Private Invite Link'}</Text>
-        <Text style={s.bodyText}>
-          {org?.isPublic
-            ? 'Share the org public key, not a personal admin key. Messaging this key should create an org-admin thread that syncs into the admin inbox.'
-            : 'Share this signed invite link for private access requests. Opening it lands the recipient in an admin request flow instead of auto-joining.'}
+        <View style={s.cardHeader}>
+          <MessageSquare size={20} color="#2fb466" />
+          <Text style={s.cardTitle}>Organization Key</Text>
+        </View>
+        <Text style={s.cardDescription}>
+          Share this key or QR code. Anyone can use it to join your organization.
         </Text>
-        {qrValue ? (
+        {publicJoinLink ? (
           <View style={s.qrWrap}>
             <QRCode
-              getRef={ref => {
-                qrCodeRef.current = ref;
-              }}
-              value={qrValue}
-              size={220}
+              getRef={ref => { qrCodeRef.current = ref; }}
+              value={publicJoinLink}
+              size={200}
               backgroundColor="#ffffff"
               color="#101418"
             />
           </View>
         ) : null}
         <View style={s.keyBox}>
-          <Text style={s.keyText}>
-            {org?.isPublic
-              ? (orgContactKey ?? 'Org public key not available yet.')
-              : (privateInviteLink ?? 'Private invite link not available yet.')}
-          </Text>
+          <Text style={s.keyText}>{orgContactKey ?? 'Loading...'}</Text>
         </View>
         <View style={s.actionRow}>
-          <TouchableOpacity
-            style={s.actionBtn}
-            onPress={org?.isPublic ? handleCopyOrgKey : handleCopyInviteLink}
-            disabled={org?.isPublic ? !orgContactKey : !privateInviteLink}
-          >
+          <TouchableOpacity style={s.actionBtn} onPress={handleCopyOrgKey} disabled={!orgContactKey}>
             <Copy size={18} color="#fff" />
-            <Text style={s.actionText}>{org?.isPublic ? 'Copy Key' : 'Copy Invite'}</Text>
+            <Text style={s.actionText}>Copy Key</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.actionBtn} onPress={handleMessageOrgInbox} disabled={!orgContactKey}>
-            <MessageSquare size={18} color="#fff" />
-            <Text style={s.actionText}>Message</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.actionBtn} onPress={() => SheetManager.show('join-org-sheet')}>
-            <ExternalLink size={18} color="#fff" />
-            <Text style={s.actionText}>Join Org</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={s.card}>
-        <Text style={s.sectionTitle}>Invite Link</Text>
-        <Text style={s.bodyText}>
-          This is the exact raw link encoded into the QR code. You can copy it directly or save the QR as an image.
-        </Text>
-        <View style={s.keyBox}>
-          <Text style={s.keyText}>{replayLink ?? 'Invite link not available yet.'}</Text>
-        </View>
-        <View style={s.actionRow}>
-          <TouchableOpacity
-            style={s.actionBtn}
-            onPress={handleCopyInviteLink}
-            disabled={!replayLink}
-          >
+          <TouchableOpacity style={s.actionBtn} onPress={handleCopyInviteLink} disabled={!publicJoinLink}>
             <Copy size={18} color="#fff" />
             <Text style={s.actionText}>Copy Link</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.actionBtn} onPress={handleDownloadQr} disabled={!replayLink || savingQr}>
+          <TouchableOpacity style={s.actionBtn} onPress={handleDownloadQr} disabled={!publicJoinLink || savingQr}>
             <Download size={18} color="#fff" />
-            <Text style={s.actionText}>{savingQr ? 'Saving…' : 'Download QR'}</Text>
+            <Text style={s.actionText}>{savingQr ? 'Saving…' : 'QR'}</Text>
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Message Admins */}
       <View style={s.card}>
-        <Text style={s.sectionTitle}>Install Links</Text>
-        <Text style={s.bodyText}>
-          Share store links alongside the {org?.isPublic ? 'org public key' : 'private invite link'} so new members can install the app before starting the admin request flow.
+        <View style={s.cardHeader}>
+          <MessageSquare size={20} color="#e8d392" />
+          <Text style={s.cardTitle}>Message Admins</Text>
+        </View>
+        <Text style={s.cardDescription}>
+          Start a conversation with the org admins to ask questions or discuss.
         </Text>
-        <TouchableOpacity style={s.storeBtn} onPress={() => openLink(APP_STORE_URL)}>
-          <ExternalLink size={18} color="#fff" />
-          <Text style={s.actionText}>App Store</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.storeBtn} onPress={() => openLink(PLAY_STORE_URL)}>
-          <ExternalLink size={18} color="#fff" />
-          <Text style={s.actionText}>Play Store</Text>
+        <TouchableOpacity
+          style={[s.primaryBtn, !orgContactKey && s.btnDisabled]}
+          onPress={handleMessageOrgInbox}
+          disabled={!orgContactKey}
+        >
+          <MessageSquare size={18} color="#000" />
+          <Text style={s.primaryBtnText}>Message Admins</Text>
         </TouchableOpacity>
       </View>
 
+      {/* Install Links */}
       <View style={s.card}>
-        <Text style={s.sectionTitle}>What Not To Share</Text>
-        <Text style={s.bodyText}>
-          Do not use a personal admin key as the org contact surface. Use the org public key for public orgs or a signed invite link for private orgs.
+        <Text style={s.sectionTitle}>Get the App</Text>
+        <Text style={s.cardDescription}>
+          Share these store links alongside your org key so new members can install Gardens.
         </Text>
+        <View style={s.storeButtons}>
+          <TouchableOpacity style={s.storeBtn} onPress={() => openLink(APP_STORE_URL)}>
+            <ExternalLink size={18} color="#fff" />
+            <Text style={s.storeBtnText}>App Store</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.storeBtn} onPress={() => openLink(PLAY_STORE_URL)}>
+            <ExternalLink size={18} color="#fff" />
+            <Text style={s.storeBtnText}>Play Store</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </ScrollView>
   );
@@ -227,23 +197,44 @@ export function OrgInviteScreen({ route, navigation }: Props) {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0a0a0a' },
   content: { padding: 20, paddingBottom: 36 },
-  title: { color: '#fff', fontSize: 22, fontWeight: '700' },
-  subtitle: { color: '#777', fontSize: 13, marginTop: 4, marginBottom: 16 },
+  title: { color: '#fff', fontSize: 28, fontWeight: '700', marginBottom: 4 },
+  subtitle: { color: '#777', fontSize: 14, marginBottom: 20 },
   card: {
-    backgroundColor: '#101010',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
+    backgroundColor: '#161616',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#1c1c1c',
+    borderColor: '#252525',
   },
-  sectionTitle: { color: '#9ca3af', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
-  bodyText: { color: '#9ca3af', fontSize: 13, lineHeight: 18, marginTop: 10 },
-  keyBox: { backgroundColor: '#0b0b0b', borderRadius: 10, padding: 12, marginTop: 10, borderWidth: 1, borderColor: '#202020' },
-  keyText: { color: '#e5e7eb', fontSize: 12 },
-  actionRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#1a1a1a' },
-  actionText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  storeBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 11, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#1a1a1a', marginTop: 10 },
-  qrWrap: { marginTop: 14, marginBottom: 4, alignItems: 'center', paddingVertical: 16, backgroundColor: '#ffffff', borderRadius: 14 },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  cardTitle: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  cardDescription: { color: '#999', fontSize: 13, lineHeight: 18, marginBottom: 16 },
+  sectionTitle: { color: '#9ca3af', fontSize: 12, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8 },
+  qrWrap: { marginVertical: 12, alignItems: 'center', paddingVertical: 16, backgroundColor: '#ffffff', borderRadius: 12 },
+  keyBox: { backgroundColor: '#0b0b0b', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#202020' },
+  keyText: { color: '#e5e7eb', fontSize: 11, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  actionRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#252525' },
+  actionText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  primaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: '#e8d392',
+  },
+  primaryBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  btnDisabled: { opacity: 0.5 },
+  storeButtons: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  storeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 10, backgroundColor: '#252525' },
+  storeBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 });

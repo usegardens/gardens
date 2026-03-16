@@ -1001,6 +1001,309 @@ pub async fn init_room_group(
     init_room_group_with_pool(room_id, initial_members, &core.read_pool).await
 }
 
+// ─── Member removal from encryption groups ────────────────────────────────────────
+
+/// Remove a member from a room's encryption group.
+/// Generates a control message that should be broadcast to other group members.
+/// Returns the serialized control message bytes if successful.
+pub async fn remove_member_from_room_group(
+    room_id: &str,
+    member_to_remove: PublicKey,
+) -> Result<Option<Vec<u8>>, EncryptionError> {
+    let core = crate::store::get_core().ok_or(EncryptionError::NotInitialised)?;
+    remove_member_from_room_group_with_pool(room_id, member_to_remove, &core.read_pool).await
+}
+
+/// Inner implementation that takes an explicit pool.
+/// Returns the serialized control message bytes if successful.
+pub(crate) async fn remove_member_from_room_group_with_pool(
+    room_id: &str,
+    member_to_remove: PublicKey,
+    pool: &SqlitePool,
+) -> Result<Option<Vec<u8>>, EncryptionError> {
+    let enc = get_encryption().ok_or(EncryptionError::NotInitialised)?;
+
+    // Load CBOR group state from DB.
+    let state_bytes = match crate::db::load_enc_group_state(pool, room_id).await? {
+        Some(bytes) => bytes,
+        None => {
+            log::warn!("[encryption] no group state found for room: {}", room_id);
+            return Ok(None);
+        }
+    };
+
+    // Deserialize snapshot → live GroupState.
+    let snapshot: GardensGroupSnapshot = ciborium::from_reader(state_bytes.as_slice())
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    let mut group_state = snapshot.into_group_state();
+
+    let removed_id = Id(member_to_remove);
+    let rng = p2panda_encryption::crypto::Rng::default();
+
+    // Use EncryptionGroup::remove to generate control message for proper group key update
+    let (new_group_state, ctrl_msg) = EncryptionGroup::remove(
+        group_state,
+        removed_id,
+        &rng,
+    ).map_err(|e| EncryptionError::Init(format!("{:?}", e)))?;
+
+    group_state = new_group_state;
+
+    // Extract updated km/kr states
+    let updated_km = group_state.dcgka.my_keys.clone();
+    let updated_kr = group_state.dcgka.pki.clone();
+
+    // Persist the updated GroupState
+    let new_snapshot = GardensGroupSnapshot::from_group_state(group_state);
+    let mut new_state_bytes = Vec::new();
+    ciborium::into_writer(&new_snapshot, &mut new_state_bytes)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_group_state(pool, room_id, "room", &new_state_bytes).await?;
+
+    // Write updated km/kr back to singleton and DB.
+    {
+        let mut km = enc.key_manager.lock().await;
+        *km = updated_km.clone();
+    }
+    {
+        let mut kr = enc.key_registry.lock().await;
+        *kr = updated_kr.clone();
+    }
+    let mut km_buf = Vec::new();
+    ciborium::into_writer(&updated_km, &mut km_buf)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_key_manager(pool, &km_buf).await?;
+    let mut kr_buf = Vec::new();
+    ciborium::into_writer(&updated_kr, &mut kr_buf)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_key_registry(pool, &kr_buf).await?;
+
+    // Serialize and return the control message
+    let mut ctrl_bytes = Vec::new();
+    ciborium::into_writer(&ctrl_msg, &mut ctrl_bytes)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+
+    log::info!("[encryption] removed member from room group: room={}, member={}", 
+        room_id, hex::encode(member_to_remove.as_bytes()));
+
+    Ok(Some(ctrl_bytes))
+}
+
+/// Remove a member from all room encryption groups in an organization.
+/// Returns control messages for each room that should be broadcast.
+pub async fn remove_member_from_org_groups(
+    org_id: &str,
+    member_to_remove: PublicKey,
+) -> Result<Vec<(String, Vec<u8>)>, EncryptionError> {
+    let core = crate::store::get_core().ok_or(EncryptionError::NotInitialised)?;
+    let pool = &core.read_pool;
+
+    // Get all rooms in the org
+    let rooms = crate::db::list_rooms(pool, org_id, true).await
+        .map_err(|e| EncryptionError::Db(e))?;
+
+    let mut ctrl_messages = Vec::new();
+
+    for room in rooms {
+        match remove_member_from_room_group_with_pool(&room.room_id, member_to_remove, pool).await {
+            Ok(Some(ctrl_bytes)) => {
+                log::info!("[encryption] removed member from room: {}", room.room_id);
+                ctrl_messages.push((room.room_id, ctrl_bytes));
+            }
+            Ok(None) => {
+                // No group state - skip
+            }
+            Err(e) => {
+                log::warn!("[encryption] failed to remove member from room {}: {}", room.room_id, e);
+            }
+        }
+    }
+
+    Ok(ctrl_messages)
+}
+
+// ─── Member addition to encryption groups ────────────────────────────────────────
+
+/// Add a member to a room's encryption group.
+/// Generates a control message to broadcast the addition to other group members.
+/// Returns the serialized control message bytes if successful.
+pub async fn add_member_to_room_group(
+    room_id: &str,
+    member_to_add: PublicKey,
+) -> Result<Option<Vec<u8>>, EncryptionError> {
+    let core = crate::store::get_core().ok_or(EncryptionError::NotInitialised)?;
+    add_member_to_room_group_with_pool(room_id, member_to_add, &core.read_pool).await
+}
+
+/// Inner implementation that takes an explicit pool.
+/// Returns the serialized control message bytes if successful.
+pub(crate) async fn add_member_to_room_group_with_pool(
+    room_id: &str,
+    member_to_add: PublicKey,
+    pool: &SqlitePool,
+) -> Result<Option<Vec<u8>>, EncryptionError> {
+    let enc = get_encryption().ok_or(EncryptionError::NotInitialised)?;
+
+    // Load CBOR group state from DB.
+    let state_bytes = match crate::db::load_enc_group_state(pool, room_id).await? {
+        Some(bytes) => bytes,
+        None => {
+            log::warn!("[encryption] no group state found for room: {}", room_id);
+            return Ok(None);
+        }
+    };
+
+    // Deserialize snapshot → live GroupState.
+    let snapshot: GardensGroupSnapshot = ciborium::from_reader(state_bytes.as_slice())
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    let mut group_state = snapshot.into_group_state();
+
+    let added_id = Id(member_to_add);
+    let rng = p2panda_encryption::crypto::Rng::default();
+
+    // Use EncryptionGroup::add to generate control message for proper group key update
+    let (new_group_state, ctrl_msg) = EncryptionGroup::add(
+        group_state,
+        added_id,
+        &rng,
+    ).map_err(|e| EncryptionError::Init(format!("{:?}", e)))?;
+
+    group_state = new_group_state;
+
+    // Extract updated km/kr states
+    let updated_km = group_state.dcgka.my_keys.clone();
+    let updated_kr = group_state.dcgka.pki.clone();
+
+    // Persist the updated GroupState
+    let new_snapshot = GardensGroupSnapshot::from_group_state(group_state);
+    let mut new_state_bytes = Vec::new();
+    ciborium::into_writer(&new_snapshot, &mut new_state_bytes)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_group_state(pool, room_id, "room", &new_state_bytes).await?;
+
+    // Write updated km/kr back to singleton and DB.
+    {
+        let mut km = enc.key_manager.lock().await;
+        *km = updated_km.clone();
+    }
+    {
+        let mut kr = enc.key_registry.lock().await;
+        *kr = updated_kr.clone();
+    }
+    let mut km_buf = Vec::new();
+    ciborium::into_writer(&updated_km, &mut km_buf)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_key_manager(pool, &km_buf).await?;
+    let mut kr_buf = Vec::new();
+    ciborium::into_writer(&updated_kr, &mut kr_buf)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+    crate::db::save_enc_key_registry(pool, &kr_buf).await?;
+
+    // Serialize and return the control message
+    let mut ctrl_bytes = Vec::new();
+    ciborium::into_writer(&ctrl_msg, &mut ctrl_bytes)
+        .map_err(|e| EncryptionError::Cbor(e.to_string()))?;
+
+    log::info!("[encryption] added member to room group: room={}, member={}", 
+        room_id, hex::encode(member_to_add.as_bytes()));
+
+    Ok(Some(ctrl_bytes))
+}
+
+/// Add a member to all room encryption groups in an organization.
+/// Returns control messages for each room that should be broadcast.
+pub async fn add_member_to_org_groups(
+    org_id: &str,
+    member_to_add: PublicKey,
+) -> Result<Vec<(String, Vec<u8>)>, EncryptionError> {
+    let core = crate::store::get_core().ok_or(EncryptionError::NotInitialised)?;
+    let pool = &core.read_pool;
+
+    // Get all rooms in the org
+    let rooms = crate::db::list_rooms(pool, org_id, true).await
+        .map_err(|e| EncryptionError::Db(e))?;
+
+    let mut ctrl_messages = Vec::new();
+
+    for room in rooms {
+        match add_member_to_room_group_with_pool(&room.room_id, member_to_add, pool).await {
+            Ok(Some(ctrl_bytes)) => {
+                log::info!("[encryption] added member to room: {}", room.room_id);
+                ctrl_messages.push((room.room_id, ctrl_bytes));
+            }
+            Ok(None) => {
+                // No group state - skip
+            }
+            Err(e) => {
+                log::warn!("[encryption] failed to add member to room {}: {}", room.room_id, e);
+            }
+        }
+    }
+
+    Ok(ctrl_messages)
+}
+
+/// Publish a control message to the ENC_CTRL log for gossiping to other group members.
+/// Also gossips in real-time via Iroh to connected room members.
+pub async fn publish_enc_ctrl_op(
+    group_id: &str,
+    ctrl_bytes: Vec<u8>,
+) -> Result<Vec<u8>, EncryptionError> {
+    use crate::ops::{self, EncCtrlOp};
+    
+    let core = crate::store::get_core().ok_or(EncryptionError::NotInitialised)?;
+    
+    let enc_ctrl_op = EncCtrlOp {
+        group_id: group_id.to_string(),
+        ctrl_data: ctrl_bytes,
+    };
+    
+    let (op_hash, gossip_bytes) = ops::publish(
+        &mut *core.op_store.lock().await,
+        &core.private_key,
+        ops::log_ids::ENC_CTRL,
+        &enc_ctrl_op,
+    ).await
+    .map_err(|e| EncryptionError::Init(e.to_string()))?;
+    
+    log::info!("[encryption] published ENC_CTRL op for group: {} ({})", group_id, op_hash);
+    
+    // Also gossip in real-time via Iroh to connected room members
+    if let Some(room_id) = group_id.strip_prefix("room:") {
+        // Check if it's a room
+        if let Ok((topic_id, peers)) = super::room_gossip_context(&core, group_id).await {
+            let peer_count = peers.len();
+            if let Err(e) = crate::network::gossip_publish(
+                topic_id,
+                crate::network::GossipTopicKind::Room,
+                peers,
+                gossip_bytes.clone(),
+            ).await {
+                log::warn!("[encryption] failed to gossip ENC_CTRL: {}", e);
+            } else {
+                log::info!("[encryption] gossiped ENC_CTRL to {} peers", peer_count);
+            }
+        }
+    } else {
+        // Try as room_id directly
+        if let Ok((topic_id, peers)) = super::room_gossip_context(&core, group_id).await {
+            let peer_count = peers.len();
+            if let Err(e) = crate::network::gossip_publish(
+                topic_id,
+                crate::network::GossipTopicKind::Room,
+                peers,
+                gossip_bytes.clone(),
+            ).await {
+                log::warn!("[encryption] failed to gossip ENC_CTRL: {}", e);
+            } else {
+                log::info!("[encryption] gossiped ENC_CTRL to {} peers", peer_count);
+            }
+        }
+    }
+    
+    Ok(gossip_bytes)
+}
+
 #[cfg(test)]
 mod room_encrypt_tests {
     use super::*;

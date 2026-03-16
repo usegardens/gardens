@@ -651,11 +651,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_gardens_core_checksum_func_claim_invite_token(
     ): Short
+    external fun uniffi_gardens_core_checksum_func_claim_one_time_invite_code(
+    ): Short
     external fun uniffi_gardens_core_checksum_func_clear_event_rsvp(
     ): Short
     external fun uniffi_gardens_core_checksum_func_create_dm_thread(
     ): Short
     external fun uniffi_gardens_core_checksum_func_create_event(
+    ): Short
+    external fun uniffi_gardens_core_checksum_func_create_one_time_invite_code(
     ): Short
     external fun uniffi_gardens_core_checksum_func_create_or_update_profile(
     ): Short
@@ -801,6 +805,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_gardens_core_checksum_func_verify_invite_token(
     ): Short
+    external fun uniffi_gardens_core_checksum_func_verify_one_time_invite_code(
+    ): Short
     external fun ffi_gardens_core_uniffi_contract_version(
     ): Int
 
@@ -830,19 +836,23 @@ external fun uniffi_gardens_core_fn_func_change_member_permission(`orgId`: RustB
 ): Unit
 external fun uniffi_gardens_core_fn_func_claim_invite_token(`tokenBase64`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_claim_one_time_invite_code(`code`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_clear_event_rsvp(`eventId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_dm_thread(`recipientKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_event(`orgId`: RustBuffer.ByValue,`title`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`locationType`: RustBuffer.ByValue,`locationText`: RustBuffer.ByValue,`locationRoomId`: RustBuffer.ByValue,`startAt`: Long,`endAt`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_create_one_time_invite_code(`orgId`: RustBuffer.ByValue,`accessLevel`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_or_update_profile(`username`: RustBuffer.ByValue,`bio`: RustBuffer.ByValue,`availableFor`: RustBuffer.ByValue,`isPublic`: Byte,`avatarBlobId`: RustBuffer.ByValue,`emailEnabled`: Byte,uniffi_out_err: UniffiRustCallStatus, 
-): Unit
+): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_org(`name`: RustBuffer.ByValue,`typeLabel`: RustBuffer.ByValue,`description`: RustBuffer.ByValue,`isPublic`: Byte,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_create_org_admin_thread(`orgId`: RustBuffer.ByValue,`adminKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
-external fun uniffi_gardens_core_fn_func_create_room(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+external fun uniffi_gardens_core_fn_func_create_room(`orgId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`roomType`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_delete_conversation(`threadId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -979,6 +989,8 @@ external fun uniffi_gardens_core_fn_func_update_room(`orgId`: RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_upload_blob(`data`: RustBuffer.ByValue,`mimeType`: RustBuffer.ByValue,`roomId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun uniffi_gardens_core_fn_func_verify_invite_token(`tokenBase64`: RustBuffer.ByValue,`currentTimestamp`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_gardens_core_fn_func_verify_one_time_invite_code(`code`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
 external fun ffi_gardens_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
 ): RustBuffer.ByValue
@@ -1123,6 +1135,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_claim_invite_token() != 21005.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_gardens_core_checksum_func_claim_one_time_invite_code() != 64652.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_gardens_core_checksum_func_clear_event_rsvp() != 49452.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1132,7 +1147,10 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_create_event() != 10558.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_create_or_update_profile() != 58304.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_create_one_time_invite_code() != 16856.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_create_or_update_profile() != 50115.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_create_org() != 56832.toShort()) {
@@ -1141,7 +1159,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_gardens_core_checksum_func_create_org_admin_thread() != 7434.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_gardens_core_checksum_func_create_room() != 23845.toShort()) {
+    if (lib.uniffi_gardens_core_checksum_func_create_room() != 3612.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_delete_conversation() != 39397.toShort()) {
@@ -1346,6 +1364,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_gardens_core_checksum_func_verify_invite_token() != 30242.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_gardens_core_checksum_func_verify_one_time_invite_code() != 23314.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -2635,6 +2656,8 @@ data class Room (
     var `archivedAt`: kotlin.Long?
     , 
     var `roomCooldownSecs`: kotlin.Long?
+    , 
+    var `roomType`: RoomType
     
 ){
     
@@ -2660,6 +2683,7 @@ public object FfiConverterTypeRoom: FfiConverterRustBuffer<Room> {
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalLong.read(buf),
             FfiConverterOptionalLong.read(buf),
+            FfiConverterTypeRoomType.read(buf),
         )
     }
 
@@ -2672,7 +2696,8 @@ public object FfiConverterTypeRoom: FfiConverterRustBuffer<Room> {
             FfiConverterULong.allocationSize(value.`encKeyEpoch`) +
             FfiConverterBoolean.allocationSize(value.`isArchived`) +
             FfiConverterOptionalLong.allocationSize(value.`archivedAt`) +
-            FfiConverterOptionalLong.allocationSize(value.`roomCooldownSecs`)
+            FfiConverterOptionalLong.allocationSize(value.`roomCooldownSecs`) +
+            FfiConverterTypeRoomType.allocationSize(value.`roomType`)
     )
 
     override fun write(value: Room, buf: ByteBuffer) {
@@ -2685,6 +2710,7 @@ public object FfiConverterTypeRoom: FfiConverterRustBuffer<Room> {
             FfiConverterBoolean.write(value.`isArchived`, buf)
             FfiConverterOptionalLong.write(value.`archivedAt`, buf)
             FfiConverterOptionalLong.write(value.`roomCooldownSecs`, buf)
+            FfiConverterTypeRoomType.write(value.`roomType`, buf)
     }
 }
 
@@ -3222,6 +3248,40 @@ public object FfiConverterTypeOnionError : FfiConverterRustBuffer<OnionException
     }
 
 }
+
+
+
+
+enum class RoomType {
+    
+    TEXT,
+    VOICE;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRoomType: FfiConverterRustBuffer<RoomType> {
+    override fun read(buf: ByteBuffer) = try {
+        RoomType.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: RoomType) = 4UL
+
+    override fun write(value: RoomType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -3969,6 +4029,20 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
+        /**
+         * Claim a one-time invite code to join an org.
+         */
+    @Throws(AuthException::class) fun `claimOneTimeInviteCode`(`code`: kotlin.String): SendResult {
+            return FfiConverterTypeSendResult.lift(
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_claim_one_time_invite_code(
+    
+        FfiConverterString.lower(`code`),_status)
+}
+    )
+    }
+    
+
     @Throws(CoreException::class) fun `clearEventRsvp`(`eventId`: kotlin.String): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     uniffiRustCallWithError(CoreException) { _status ->
@@ -4002,14 +4076,30 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
-    @Throws(CoreException::class) fun `createOrUpdateProfile`(`username`: kotlin.String, `bio`: kotlin.String?, `availableFor`: List<kotlin.String>, `isPublic`: kotlin.Boolean, `avatarBlobId`: kotlin.String?, `emailEnabled`: kotlin.Boolean)
-        = 
+        /**
+         * Generate a one-time invite code that can only be used once.
+         * Returns the one-time code as a string.
+         */
+    @Throws(AuthException::class) fun `createOneTimeInviteCode`(`orgId`: kotlin.String, `accessLevel`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_create_one_time_invite_code(
+    
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`accessLevel`),_status)
+}
+    )
+    }
+    
+
+    @Throws(CoreException::class) fun `createOrUpdateProfile`(`username`: kotlin.String, `bio`: kotlin.String?, `availableFor`: List<kotlin.String>, `isPublic`: kotlin.Boolean, `avatarBlobId`: kotlin.String?, `emailEnabled`: kotlin.Boolean): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
     uniffiRustCallWithError(CoreException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_create_or_update_profile(
     
         FfiConverterString.lower(`username`),FfiConverterOptionalString.lower(`bio`),FfiConverterSequenceString.lower(`availableFor`),FfiConverterBoolean.lower(`isPublic`),FfiConverterOptionalString.lower(`avatarBlobId`),FfiConverterBoolean.lower(`emailEnabled`),_status)
 }
-    
+    )
+    }
     
 
     @Throws(CoreException::class) fun `createOrg`(`name`: kotlin.String, `typeLabel`: kotlin.String, `description`: kotlin.String?, `isPublic`: kotlin.Boolean): kotlin.String {
@@ -4034,12 +4124,12 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     }
     
 
-    @Throws(CoreException::class) fun `createRoom`(`orgId`: kotlin.String, `name`: kotlin.String): kotlin.String {
+    @Throws(CoreException::class) fun `createRoom`(`orgId`: kotlin.String, `name`: kotlin.String, `roomType`: RoomType): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCallWithError(CoreException) { _status ->
     UniffiLib.uniffi_gardens_core_fn_func_create_room(
     
-        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`name`),_status)
+        FfiConverterString.lower(`orgId`),FfiConverterString.lower(`name`),FfiConverterTypeRoomType.lower(`roomType`),_status)
 }
     )
     }
@@ -4789,6 +4879,21 @@ public object FfiConverterSequenceTypeSyncHopFfi: FfiConverterRustBuffer<List<Sy
     UniffiLib.uniffi_gardens_core_fn_func_verify_invite_token(
     
         FfiConverterString.lower(`tokenBase64`),FfiConverterLong.lower(`currentTimestamp`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Verify a one-time invite token without claiming it.
+         * Returns the invite token info if valid.
+         */
+    @Throws(AuthException::class) fun `verifyOneTimeInviteCode`(`code`: kotlin.String): InviteTokenInfo {
+            return FfiConverterTypeInviteTokenInfo.lift(
+    uniffiRustCallWithError(AuthException) { _status ->
+    UniffiLib.uniffi_gardens_core_fn_func_verify_one_time_invite_code(
+    
+        FfiConverterString.lower(`code`),_status)
 }
     )
     }

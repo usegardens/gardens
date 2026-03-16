@@ -77,6 +77,7 @@ pub struct OnionPacket {
 pub enum GossipTopicKind {
     Room,
     DmInbox,
+    Org,
 }
 
 /// Global network state - initialized once on startup.
@@ -131,9 +132,21 @@ pub async fn init_network(
 
     // Initialize blob store
     let blob_store_path = blobs::blob_store_path(_db_dir);
-    let blob_store = iroh_blobs::store::fs::FsStore::load(blob_store_path)
+    
+    // Create the blobs directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&blob_store_path) {
+        return Err(NetworkError::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to create blobs directory: {}", e),
+        )));
+    }
+    
+    let blob_store = iroh_blobs::store::fs::FsStore::load(&blob_store_path)
         .await
-        .map_err(|e| NetworkError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        .map_err(|e| NetworkError::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to load blob store: {}", e),
+        )))?;
     let blob_store = Arc::new(blob_store);
 
     // Channel for receiving onion packets
@@ -407,6 +420,18 @@ async fn handle_gossip_message(kind: GossipTopicKind, bytes: Vec<u8>) -> Result<
     let payload = match kind {
         GossipTopicKind::Room => bytes,
         GossipTopicKind::DmInbox => {
+            if sealed_sender::is_sealed(&bytes) {
+                let core = store::get_core().ok_or(NetworkError::NotInitialized)?;
+                let seed = *core.private_key.as_bytes();
+                let (_sender_pk, op_bytes) = sealed_sender::open(&bytes, &seed)
+                    .map_err(|e| NetworkError::ProtocolError(e.to_string()))?;
+                op_bytes
+            } else {
+                bytes
+            }
+        }
+        GossipTopicKind::Org => {
+            // Org gossip uses sealed sender for encrypted messages
             if sealed_sender::is_sealed(&bytes) {
                 let core = store::get_core().ok_or(NetworkError::NotInitialized)?;
                 let seed = *core.private_key.as_bytes();

@@ -7,6 +7,7 @@
  */
 
 import { NativeModules, TurboModuleRegistry } from 'react-native';
+import RNFS from 'react-native-fs';
 
 export interface KeyPair {
   privateKeyHex: string; // 64 hex chars — Ed25519 private key seed
@@ -87,10 +88,13 @@ export interface OrgSummary {
   createdAt: number;
 }
 
+export type RoomType = 'text' | 'voice';
+
 export interface Room {
   roomId: string;
   orgId: string;
   name: string;
+  roomType: RoomType;
   createdBy: string;
   createdAt: number;
   encKeyEpoch: number;
@@ -223,7 +227,7 @@ interface GardensCoreNative {
   initNetwork(relayUrl: string | null): Promise<string>;
   isNetworkInitialized(): Promise<boolean>;
   getNodeId(): Promise<string>;
-  createOrUpdateProfile(username: string, bio: string | null, availableFor: string[], isPublic: boolean, avatarBlobId: string | null, emailEnabled: boolean): Promise<void>;
+  createOrUpdateProfile(username: string, bio: string | null, availableFor: string[], isPublic: boolean, avatarBlobId: string | null, emailEnabled: boolean): Promise<Uint8Array>;
   getPkarrUrl(publicKeyHex: string): string;
   getPkarrUrlFromZ32(z32Key: string): string;
   resolvePkarr(z32Key: string): Promise<PkarrResolved | null>;
@@ -232,7 +236,7 @@ interface GardensCoreNative {
   createOrg(name: string, typeLabel: string, description: string | null, isPublic: boolean): Promise<string>;
   listMyOrgs(): Promise<OrgSummary[]>;
   updateOrg(orgId: string, name: string | null, typeLabel: string | null, description: string | null, avatarBlobId: string | null, coverBlobId: string | null, welcomeText: string | null, customEmojiJson: string | null, orgCooldownSecs: number | null, isPublic: boolean | null, emailEnabled: boolean | null): Promise<Uint8Array | number[] | string>;
-  createRoom(orgId: string, name: string): Promise<string>;
+  createRoom(orgId: string, name: string, roomType: RoomType): Promise<string>;
   listRooms(orgId: string, includeArchived: boolean): Promise<Room[]>;
   updateRoom(orgId: string, roomId: string, name: string | null, roomCooldownSecs: number | null): Promise<void>;
   setRoomCooldown(orgId: string, roomId: string, cooldownSecs: number): Promise<void>;
@@ -297,6 +301,10 @@ interface GardensCoreNative {
   // Phase 3
   getConnectionStatus(): Promise<ConnectionStatus>;
   searchPublicOrgs(query: string): Promise<OrgSummary[]>;
+  // One-time invite codes
+  createOneTimeInviteCode(orgId: string, accessLevel: string): Promise<string>;
+  verifyOneTimeInviteCode(code: string): InviteTokenInfo;
+  claimOneTimeInviteCode(code: string): Promise<{ id: string; opBytesBase64: string }>;
   // Phase 5
   generateInviteToken(orgId: string, accessLevel: string, expiryTimestamp: number): string;
   verifyInviteToken(tokenBase64: string, currentTimestamp: number): InviteTokenInfo;
@@ -382,7 +390,7 @@ function loadNative(): GardensCoreNative {
       async createOrg() { throw new Error('gardens_core not loaded'); },
       async listMyOrgs() { return []; },
       async updateOrg() { throw new Error('gardens_core not loaded'); },
-      async createRoom() { throw new Error('gardens_core not loaded'); },
+      async createRoom(_orgId: string, _name: string, _roomType: RoomType) { throw new Error('gardens_core not loaded'); },
       async listRooms() { return []; },
       async updateRoom() { throw new Error('gardens_core not loaded'); },
       async setRoomCooldown() { throw new Error('gardens_core not loaded'); },
@@ -413,6 +421,10 @@ function loadNative(): GardensCoreNative {
       async leaveOrg() { throw new Error('gardens_core not loaded'); },
       async getConnectionStatus() { return 'Offline'; },
       async searchPublicOrgs() { return []; },
+      // One-time invite codes
+      async createOneTimeInviteCode() { throw new Error('gardens_core not loaded'); },
+      verifyOneTimeInviteCode() { throw new Error('gardens_core not loaded'); },
+      async claimOneTimeInviteCode() { throw new Error('gardens_core not loaded'); },
       generateInviteToken() { throw new Error('gardens_core not loaded'); },
       verifyInviteToken() { throw new Error('gardens_core not loaded'); },
       async addMemberDirect() { throw new Error('gardens_core not loaded'); },
@@ -483,8 +495,9 @@ export async function createOrUpdateProfile(
   isPublic: boolean = false,
   avatarBlobId: string | null = null,
   emailEnabled: boolean = false,
-): Promise<void> {
-  return native.createOrUpdateProfile(username, bio, availableFor, isPublic, avatarBlobId, emailEnabled);
+): Promise<SendResult> {
+  const opBytes = await native.createOrUpdateProfile(username, bio, availableFor, isPublic, avatarBlobId, emailEnabled);
+  return { id: '', opBytes: coerceNativeBytes(opBytes) };
 }
 
 export function getPkarrUrl(publicKeyHex: string): string {
@@ -556,8 +569,8 @@ export async function updateOrg(
   return { id: orgId, opBytes: coerceNativeBytes(opBytes) };
 }
 
-export async function createRoom(orgId: string, name: string): Promise<string> {
-  return native.createRoom(orgId, name);
+export async function createRoom(orgId: string, name: string, roomType: RoomType = 'text'): Promise<string> {
+  return native.createRoom(orgId, name, roomType);
 }
 
 export async function listRooms(orgId: string, includeArchived: boolean = false): Promise<Room[]> {
@@ -756,7 +769,9 @@ export async function leaveOrg(orgId: string): Promise<SendResult> {
 // ── Phase 3 exports ───────────────────────────────────────────────────────────
 
 export async function initCore(privateKeyHex: string): Promise<void> {
-  return native.initCore(privateKeyHex, '');
+  // Get the document directory path for storing the database and blob store
+  const dbDir = RNFS?.DocumentDirectoryPath || '';
+  return native.initCore(privateKeyHex, dbDir);
 }
 
 export async function initNetwork(relayUrl: string | null = null): Promise<string> {
@@ -810,6 +825,45 @@ export function verifyInviteToken(
       if (err.message.includes('TokenExpired')) {
         throw new AuthError('TokenExpired', err.message);
       }
+    }
+    throw err;
+  }
+}
+
+// ── One-time invite codes ───────────────────────────────────────────────────────
+
+export async function createOneTimeInviteCode(
+  orgId: string,
+  accessLevel: string,
+): Promise<string> {
+  try {
+    return await native.createOneTimeInviteCode(orgId, accessLevel);
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('Unauthorized')) {
+      throw new AuthError('Unauthorized', err.message);
+    }
+    throw err;
+  }
+}
+
+export function verifyOneTimeInviteCode(code: string): InviteTokenInfo {
+  try {
+    return native.verifyOneTimeInviteCode(code);
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('Unauthorized')) {
+      throw new AuthError('Unauthorized', err.message);
+    }
+    throw err;
+  }
+}
+
+export async function claimOneTimeInviteCode(code: string): Promise<SendResult> {
+  try {
+    const raw = await native.claimOneTimeInviteCode(code);
+    return { id: raw.id, opBytes: base64ToBytes(raw.opBytesBase64) };
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('Unauthorized')) {
+      throw new AuthError('Unauthorized', err.message);
     }
     throw err;
   }
@@ -935,17 +989,12 @@ export async function uploadBlob(
   mimeType: string,
   roomId: string | null,
 ): Promise<string> {
-  let binary = '';
-  for (let i = 0; i < data.byteLength; i++) { binary += String.fromCharCode(data[i]); }
-  return native.uploadBlob(btoa(binary), mimeType, roomId);
+  const base64 = bytesToBase64(data);
+  return native.uploadBlob(base64, mimeType, roomId);
 }
 
-export async function getBlob(blobHash: string, roomId: string | null): Promise<Uint8Array> {
-  const base64 = await native.getBlob(blobHash, roomId);
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
-  return bytes;
+export async function getBlob(blobHash: string, roomId: string | null): Promise<string> {
+  return native.getBlob(blobHash, roomId);
 }
 
 export async function hasBlob(blobHash: string): Promise<boolean> {
@@ -956,13 +1005,8 @@ export async function requestBlobFromPeer(
   blobHash: string,
   peerPublicKey: string,
   timeoutSecs: number = 30,
-): Promise<Uint8Array | null> {
-  const base64 = await native.requestBlobFromPeer(blobHash, peerPublicKey, timeoutSecs);
-  if (!base64) return null;
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
-  return bytes;
+): Promise<string | null> {
+  return native.requestBlobFromPeer(blobHash, peerPublicKey, timeoutSecs);
 }
 
 export async function provideBlobToPeer(
@@ -974,16 +1018,58 @@ export async function provideBlobToPeer(
 
 // ── Onion routing ─────────────────────────────────────────────────────────────
 
+// Base64 encode function compatible with React Native (btoa not available)
 function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
-  return btoa(binary);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  let i: number;
+  for (i = 0; i + 2 <= bytes.length; i += 3) {
+    result += chars[bytes[i] >> 2];
+    result += chars[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];
+    result += chars[((bytes[i + 1] & 15) << 2) | (bytes[i + 2] >> 6)];
+    result += chars[bytes[i + 2] & 63];
+  }
+  const remaining = bytes.length - i;
+  if (remaining === 1) {
+    result += chars[bytes[i] >> 2];
+    result += chars[(bytes[i] & 3) << 4];
+    result += '==';
+  } else if (remaining === 2) {
+    result += chars[bytes[i] >> 2];
+    result += chars[((bytes[i] & 3) << 4) | (bytes[i + 1] >> 4)];
+    result += chars[(bytes[i + 1] & 15) << 2];
+    result += '=';
+  }
+  return result;
 }
 
+// Base64 decode function compatible with React Native (atob not available)
 function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // Remove padding
+  const cleanBase64 = base64.replace(/=+$/, '');
+  const length = (cleanBase64.length * 6) >> 3;
+  const bytes = new Uint8Array(length);
+  let i: number, p = 0;
+  for (i = 0; i + 4 <= cleanBase64.length; i += 4) {
+    const enc1 = chars.indexOf(cleanBase64[i]);
+    const enc2 = chars.indexOf(cleanBase64[i + 1]);
+    const enc3 = chars.indexOf(cleanBase64[i + 2]);
+    const enc4 = chars.indexOf(cleanBase64[i + 3]);
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    bytes[p++] = ((enc3 & 3) << 6) | enc4;
+  }
+  const remaining = cleanBase64.length - i;
+  if (remaining >= 2) {
+    const enc1 = chars.indexOf(cleanBase64[i]);
+    const enc2 = chars.indexOf(cleanBase64[i + 1]);
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    if (remaining > 2) {
+      const enc3 = chars.indexOf(cleanBase64[i + 2]);
+      bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    }
+  }
   return bytes;
 }
 

@@ -37,14 +37,15 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { InboxScreen } from '../screens/InboxScreen';
 import { OrgChatScreen } from '../screens/OrgChatScreen';
 import { OrgSettingsScreen } from '../screens/OrgSettingsScreen';
+import { ChannelSettingsScreen } from '../screens/ChannelSettingsScreen';
 import { UserSettingsScreen } from '../screens/UserSettingsScreen';
 import { ConversationScreen } from '../screens/ConversationScreen';
 import { RequestsScreen } from '../screens/RequestsScreen';
 import { MemberListScreen } from '../screens/MemberListScreen';
-import { AuditLogScreen } from '../screens/AuditLogScreen';
 import { OrgInviteScreen } from '../screens/OrgInviteScreen';
-import { JoinOrgRequestScreen } from '../screens/JoinOrgRequestScreen';
+import { JoinOrgScreen } from '../screens/JoinOrgScreen';
 import { QrScannerScreen } from '../screens/QrScannerScreen';
+import { VoiceRoomScreen } from '../screens/VoiceRoomScreen';
 import { DebugConnectionPanel } from '../components/DebugConnectionPanel';
 import { LockScreen } from '../components/LockScreen';
 import { DonationPromptModal } from '../components/DonationPromptModal';
@@ -75,10 +76,13 @@ export type MainStackParamList = {
   DiscoverOrgs: undefined;
   OrgChat: { orgId: string; orgName: string; initialRoomId?: string };
   OrgSettings: { orgId: string; orgName: string };
+  ChannelSettings: { orgId: string; orgName: string; roomId: string; roomName: string };
   OrgInvite: { orgId: string; orgName: string };
   MemberList: { orgId: string; orgName: string };
   AuditLog: { orgId: string; orgName: string };
   JoinOrgRequest: { z32Key?: string; orgId?: string; adminKey?: string; orgName?: string; tokenBase64?: string };
+  VoiceRoom: { roomId: string; roomName: string; orgId: string; orgName: string };
+  JoinOrg: { z32Key?: string; orgId?: string; adminKey?: string; orgName?: string; tokenBase64?: string };
   QrScanner: undefined;
   Conversation: {
     threadId: string;
@@ -235,14 +239,14 @@ function MainNavigator() {
 
       if (parsedLink.kind === 'pk') {
         setTimeout(() => {
-          navigationRef.current?.navigate('JoinOrgRequest', { z32Key: parsedLink.z32Key });
+          navigationRef.current?.navigate('JoinOrg', { z32Key: parsedLink.z32Key });
         }, 100);
         return;
       }
 
       if (parsedLink.kind === 'join') {
         setTimeout(() => {
-          navigationRef.current?.navigate('JoinOrgRequest', {
+          navigationRef.current?.navigate('JoinOrg', {
             orgId: parsedLink.orgId,
             adminKey: parsedLink.adminKey,
             z32Key: parsedLink.z32Key,
@@ -254,7 +258,7 @@ function MainNavigator() {
 
       if (parsedLink.kind === 'invite') {
         setTimeout(() => {
-          navigationRef.current?.navigate('JoinOrgRequest', {
+          navigationRef.current?.navigate('JoinOrg', {
             tokenBase64: parsedLink.tokenBase64,
             orgName: parsedLink.orgName,
           });
@@ -372,6 +376,11 @@ function MainNavigator() {
           options={{ title: 'Server Settings', headerShown: true }}
         />
         <MainStack.Screen
+          name="ChannelSettings"
+          component={ChannelSettingsScreen}
+          options={{ title: 'Channel Settings', headerShown: true }}
+        />
+        <MainStack.Screen
           name="OrgInvite"
           component={OrgInviteScreen}
           options={{ title: 'Invite Members', headerShown: true }}
@@ -382,14 +391,25 @@ function MainNavigator() {
           options={{ title: 'Members', headerShown: true }}
         />
         <MainStack.Screen
-          name="JoinOrgRequest"
-          component={JoinOrgRequestScreen}
+          name="JoinOrg"
+          component={JoinOrgScreen}
           options={{ title: 'Join Organization', headerShown: true }}
         />
         <MainStack.Screen
           name="QrScanner"
           component={QrScannerScreen}
           options={{ title: 'Join Org', headerShown: true }}
+        />
+
+        <MainStack.Screen
+          name="VoiceRoom"
+          component={VoiceRoomScreen}
+          options={{ 
+            headerShown: true,
+            title: 'Voice Channel',
+            headerStyle: { backgroundColor: '#0a0a0a' },
+            headerTintColor: '#fff',
+          }}
         />
 
         <MainStack.Screen

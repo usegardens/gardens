@@ -5,23 +5,29 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  Linking,
   TextInput,
   Clipboard,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import ActionSheet, { SheetManager, SheetProps } from 'react-native-actions-sheet';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { resolvePkarr } from '../ffi/gardensCore';
+import { useOrgsStore } from '../stores/useOrgsStore';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MainStackParamList } from '../navigation/RootNavigator';
-import { parseGardensLink } from '../utils/gardensLinks';
 
 type Nav = NativeStackNavigationProp<MainStackParamList>;
+
+// Z32 alphabet regex (lowercase only, as z32 keys are case-insensitive)
+// Support both 52-char and 64-char z32 encoded keys
+const Z32_REGEX = /^[a-z2-7]{52}(?:[a-z2-7]{12})?$/i;
 
 export function JoinOrgSheet(props: SheetProps<'join-org-sheet'>) {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
+  const { fetchMyOrgs } = useOrgsStore();
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 28 : 16);
@@ -35,57 +41,50 @@ export function JoinOrgSheet(props: SheetProps<'join-org-sheet'>) {
     setBusy(false);
   }
 
-  async function handleCode(rawValue: string) {
+  function isValidZ32(key: string): boolean {
+    return Z32_REGEX.test(key.trim());
+  }
+
+  async function handleJoin(rawValue: string) {
     if (busy) return;
     const trimmed = rawValue.trim();
+    
     if (!trimmed) {
-      Alert.alert('Paste required', 'Paste an invite link, org link, or raw invite token.');
+      Alert.alert('Key required', 'Enter a public organization key (z32) to join.');
+      return;
+    }
+
+    if (!isValidZ32(trimmed)) {
+      Alert.alert(
+        'Invalid key',
+        'Please enter a valid z32 public key (52 or 64 characters, letters a-z and numbers 2-7).'
+      );
       return;
     }
 
     setBusy(true);
     try {
-      const parsedLink = parseGardensLink(trimmed);
-      if (parsedLink?.kind === 'dm') {
-        await Linking.openURL(trimmed);
-        close();
+      const record = await resolvePkarr(trimmed.toLowerCase());
+      
+      if (!record) {
+        Alert.alert('Organization not found', 'No public organization found with this key.');
+        return;
+      }
+      
+      if (record.recordType !== 'org' || !record.orgId) {
+        Alert.alert('Not an organization', 'This key does not belong to a public organization.');
         return;
       }
 
-      if (parsedLink?.kind === 'pk') {
-        close();
-        navigation.navigate('JoinOrgRequest', { z32Key: parsedLink.z32Key });
-        return;
-      }
-
-      if (parsedLink?.kind === 'join' || parsedLink?.kind === 'invite') {
-        close();
-        navigation.navigate(
-          'JoinOrgRequest',
-          parsedLink.kind === 'join'
-            ? {
-                orgId: parsedLink.orgId,
-                adminKey: parsedLink.adminKey,
-                z32Key: parsedLink.z32Key,
-                orgName: parsedLink.orgName,
-              }
-            : {
-                tokenBase64: parsedLink.tokenBase64,
-                orgName: parsedLink.orgName,
-              },
-        );
-        return;
-      }
-
-      if (/^[a-z2-7]{20,}$/i.test(trimmed)) {
-        close();
-        navigation.navigate('JoinOrgRequest', { z32Key: trimmed });
-        return;
-      }
-
-      Alert.alert('Unsupported invite', 'Paste a Gardens invite link, org link, or raw invite token.');
+      // Success - navigate to org chat
+      await fetchMyOrgs();
+      close();
+      navigation.navigate('OrgChat', { 
+        orgId: record.orgId, 
+        orgName: record.name || 'Organization' 
+      });
     } catch (err: any) {
-      Alert.alert('Import failed', err?.message || 'Could not open this invite.');
+      Alert.alert('Error', err?.message || 'Failed to find organization. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -95,11 +94,10 @@ export function JoinOrgSheet(props: SheetProps<'join-org-sheet'>) {
     try {
       const clipboardValue = await Clipboard.getString();
       if (!clipboardValue?.trim()) {
-        Alert.alert('Clipboard empty', 'Copy an invite link or token first.');
+        Alert.alert('Clipboard empty', 'Copy a public organization key first.');
         return;
       }
-      setValue(clipboardValue);
-      await handleCode(clipboardValue);
+      setValue(clipboardValue.trim());
     } catch (err: any) {
       Alert.alert('Paste failed', err?.message || 'Could not read the clipboard.');
     }
@@ -110,30 +108,41 @@ export function JoinOrgSheet(props: SheetProps<'join-org-sheet'>) {
       id={props.sheetId}
       gestureEnabled={!busy}
       useBottomSafeAreaPadding
-      containerStyle={[s.container, { paddingBottom: bottomInset + 12 }]}
+      containerStyle={{...s.container, paddingBottom: bottomInset + 12}}
       indicatorStyle={s.handle}
       onBeforeShow={reset}
     >
       <View style={[s.card, { paddingBottom: bottomInset + 8 }]}>
-        <Text style={s.title}>Join Org</Text>
+        <Text style={s.title}>Join Public Org</Text>
         <Text style={s.body}>
-          Paste a Gardens invite link, public org link, org code, or raw invite token.
+          Enter a public organization key (z32) to join. Public orgs are discoverable by anyone.
         </Text>
 
         <TextInput
           value={value}
           onChangeText={setValue}
-          placeholder="gardens://invite?token=..."
+          placeholder="abc123def456..."
           placeholderTextColor="#7d6a58"
-          multiline
           autoCapitalize="none"
           autoCorrect={false}
           style={s.input}
           editable={!busy}
         />
 
-        <TouchableOpacity style={s.primaryBtn} onPress={() => handleCode(value)} disabled={busy}>
-          <Text style={s.primaryBtnText}>{busy ? 'Opening…' : 'Open Invite'}</Text>
+        <Text style={s.hint}>
+          Have an invite link? Tap it from your messages to join private orgs.
+        </Text>
+
+        <TouchableOpacity 
+          style={busy ? [s.primaryBtn, s.primaryBtnDisabled] : s.primaryBtn} 
+          onPress={() => handleJoin(value)} 
+          disabled={busy}
+        >
+          {busy ? (
+            <ActivityIndicator color="#111" />
+          ) : (
+            <Text style={s.primaryBtnText}>Find & Join</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity style={s.secondaryBtn} onPress={() => handlePasteFromClipboard()} disabled={busy}>
@@ -161,8 +170,9 @@ const s = StyleSheet.create({
   },
   title: { color: '#fff', fontSize: 22, fontWeight: '800' },
   body: { color: '#c8b49f', fontSize: 14, lineHeight: 20, marginTop: 8, marginBottom: 16 },
+  hint: { color: '#7d6a58', fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 4 },
   input: {
-    minHeight: 160,
+    minHeight: 56,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#3a3026',
@@ -170,8 +180,8 @@ const s = StyleSheet.create({
     color: '#efe4d8',
     paddingHorizontal: 14,
     paddingVertical: 14,
-    fontSize: 14,
-    textAlignVertical: 'top',
+    fontSize: 16,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   primaryBtn: {
     marginTop: 16,
@@ -179,6 +189,9 @@ const s = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
+  },
+  primaryBtnDisabled: {
+    opacity: 0.6,
   },
   primaryBtnText: { color: '#111', fontSize: 15, fontWeight: '800' },
   secondaryBtn: {

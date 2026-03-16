@@ -862,6 +862,8 @@ export async function renderProfilePage(record: ResolvedRecord, options: RenderO
               </button>
             </div>
 
+            <a href="gardens://dm/${escapeHtml(record.publicKey)}" class="btn-primary">Message</a>
+
           <div class="store-buttons">
 
           <a
@@ -991,6 +993,8 @@ export async function renderOrgPage(record: ResolvedRecord, options: RenderOptio
                 </svg>
               </button>
             </div>
+
+            <a href="gardens://join?orgId=${escapeHtml(record.orgId || '')}&z32Key=${escapeHtml(record.publicKey)}&name=${escapeHtml(orgName)}" class="btn-primary">Join Organization</a>
 
             <div class="store-buttons">
 

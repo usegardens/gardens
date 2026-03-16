@@ -40,7 +40,7 @@ export function ConversationScreen({ route, navigation }: Props) {
   const { subscribe, unsubscribe, opTick } = useSyncStore();
   const { resolveThread: resolveJoinRequestThread } = useJoinRequestsStore();
   const [loading, setLoading] = useState(true);
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<string | undefined>(undefined);
   const flatListRef = useRef<FlatList>(null);
 
   const contextKey = threadId;
@@ -205,9 +205,9 @@ export function ConversationScreen({ route, navigation }: Props) {
         contentType: 'text',
         textContent: text,
         mentions: extractMentions(text),
-        replyTo: replyingTo,
+        replyTo: replyingTo ?? undefined,
       });
-      setReplyingTo(null);
+      setReplyingTo(undefined);
       sendDMPushForOutgoingMessage(text);
       await loadMessages();
       setTimeout(() => {
@@ -222,8 +222,8 @@ export function ConversationScreen({ route, navigation }: Props) {
     try {
       const wasReply = !!replyingTo;
       await sendProfileIfNeeded();
-      await sendMessage({ dmThreadId: threadId, contentType, blobId, replyTo: replyingTo });
-      setReplyingTo(null);
+      await sendMessage({ dmThreadId: threadId, contentType, blobId, replyTo: replyingTo ?? undefined });
+      setReplyingTo(undefined);
       sendDMPushForOutgoingMessage(wasReply ? `Replied with a ${contentType}` : `Sent a ${contentType}`);
       await loadMessages();
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -236,8 +236,8 @@ export function ConversationScreen({ route, navigation }: Props) {
     try {
       const wasReply = !!replyingTo;
       await sendProfileIfNeeded();
-      await sendMessage({ dmThreadId: threadId, contentType: 'audio', blobId, replyTo: replyingTo });
-      setReplyingTo(null);
+      await sendMessage({ dmThreadId: threadId, contentType: 'audio', blobId, replyTo: replyingTo ?? undefined });
+      setReplyingTo(undefined);
       sendDMPushForOutgoingMessage(wasReply ? 'Replied with a voice message' : 'Sent a voice message');
       await loadMessages();
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -250,8 +250,8 @@ export function ConversationScreen({ route, navigation }: Props) {
     try {
       const wasReply = !!replyingTo;
       await sendProfileIfNeeded();
-      await sendMessage({ dmThreadId: threadId, contentType: 'gif', embedUrl, replyTo: replyingTo });
-      setReplyingTo(null);
+      await sendMessage({ dmThreadId: threadId, contentType: 'gif', embedUrl, replyTo: replyingTo ?? undefined });
+      setReplyingTo(undefined);
       sendDMPushForOutgoingMessage(wasReply ? 'Replied with a GIF' : 'Sent a GIF');
       await loadMessages();
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
@@ -419,6 +419,29 @@ export function ConversationScreen({ route, navigation }: Props) {
           renderItem={({ item, index }) => {
             const prev = index > 0 ? messageList[index - 1] : null;
             const isGrouped = prev?.authorKey === item.authorKey;
+            
+            // Collect consecutive image messages from the same author for grid display
+            let imageGroup: typeof messageList = [];
+            if (item.contentType === 'image') {
+              imageGroup = [item];
+              // Look backward
+              let lookBack = index - 1;
+              while (lookBack >= 0 && 
+                     messageList[lookBack].authorKey === item.authorKey && 
+                     messageList[lookBack].contentType === 'image') {
+                imageGroup.unshift(messageList[lookBack]);
+                lookBack--;
+              }
+              // Look forward
+              let lookForward = index + 1;
+              while (lookForward < messageList.length && 
+                     messageList[lookForward].authorKey === item.authorKey && 
+                     messageList[lookForward].contentType === 'image') {
+                imageGroup.push(messageList[lookForward]);
+                lookForward++;
+              }
+            }
+            
             const isOwn = item.authorKey === myProfile?.publicKey;
             const profile = profileCache[item.authorKey];
             const resolvedProfile = isOwn ? (myProfile ?? profile) : profile;
@@ -456,6 +479,7 @@ export function ConversationScreen({ route, navigation }: Props) {
                 authorShield={authorShield}
                 authorAvatarUri={authorAvatarUri}
                 replyToPreview={replyToPreview}
+                imageGroup={imageGroup.length > 1 ? imageGroup : undefined}
                 onReply={() => handleReply(item.messageId)}
                 onLongPress={() => handleLongPress(item)}
               />
@@ -474,7 +498,7 @@ export function ConversationScreen({ route, navigation }: Props) {
         placeholder="Message..."
         mentionCandidates={mentionCandidates}
         replyingTo={replyingTo}
-        onCancelReply={() => setReplyingTo(null)}
+        onCancelReply={() => setReplyingTo(undefined)}
       />
     </View>
   );

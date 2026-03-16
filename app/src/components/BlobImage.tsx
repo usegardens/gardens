@@ -7,7 +7,7 @@ import {
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
-import { getBlob, requestBlobFromPeer } from '../ffi/gardensCore';
+import { getBlob, requestBlobFromPeer, isNetworkInitialized } from '../ffi/gardensCore';
 
 interface Props {
   blobHash: string;
@@ -34,14 +34,23 @@ export function BlobImage({
     let cancelled = false;
 
     async function load() {
+      // Check if native module is ready by checking network initialization
       try {
-        const bytes = await getBlob(blobHash, roomId);
+        const networkReady = await isNetworkInitialized();
+        if (!networkReady) {
+          setState({ status: 'error' });
+          return;
+        }
+      } catch {
+        setState({ status: 'error' });
+        return;
+      }
+
+      try {
+        // getBlob returns base64 string directly from native module
+        const base64 = await getBlob(blobHash, roomId);
         if (cancelled) return;
-        const binary = Array.from(bytes)
-          .map((b) => String.fromCharCode(b))
-          .join('');
-        const b64 = btoa(binary);
-        setState({ status: 'ready', uri: `data:${mimeType};base64,${b64}` });
+        setState({ status: 'ready', uri: `data:${mimeType};base64,${base64}` });
         return;
       } catch {
         // fall through to peer fetch
@@ -49,10 +58,10 @@ export function BlobImage({
 
       if (peerPublicKey) {
         try {
-          const bytes = await requestBlobFromPeer(blobHash, peerPublicKey);
-          if (!cancelled && bytes) {
-            const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join('');
-            setState({ status: 'ready', uri: `data:${mimeType};base64,${btoa(binary)}` });
+          // requestBlobFromPeer returns base64 string directly
+          const base64 = await requestBlobFromPeer(blobHash, peerPublicKey);
+          if (!cancelled && base64) {
+            setState({ status: 'ready', uri: `data:${mimeType};base64,${base64}` });
             return;
           }
         } catch {
@@ -65,9 +74,26 @@ export function BlobImage({
           const resp = await fetch(`${publicRelayUrl}/public-blob/${blobHash}`);
           if (!cancelled && resp.ok) {
             const buf = await resp.arrayBuffer();
-            const binary = Array.from(new Uint8Array(buf)).map((b) => String.fromCharCode(b)).join('');
+            // Convert ArrayBuffer to base64 using React Native compatible method
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            // Simple base64 encoding for React Native
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+            let base64 = '';
+            for (let i = 0; i < binary.length; i += 3) {
+              const b1 = binary.charCodeAt(i);
+              const b2 = i + 1 < binary.length ? binary.charCodeAt(i + 1) : 0;
+              const b3 = i + 2 < binary.length ? binary.charCodeAt(i + 2) : 0;
+              base64 += chars[b1 >> 2];
+              base64 += chars[((b1 & 3) << 4) | (b2 >> 4)];
+              base64 += i + 1 < binary.length ? chars[((b2 & 15) << 2) | (b3 >> 6)] : '=';
+              base64 += i + 2 < binary.length ? chars[b3 & 63] : '=';
+            }
             const respMime = resp.headers.get('Content-Type') ?? mimeType;
-            setState({ status: 'ready', uri: `data:${respMime};base64,${btoa(binary)}` });
+            setState({ status: 'ready', uri: `data:${respMime};base64,${base64}` });
             return;
           }
         } catch {

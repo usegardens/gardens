@@ -115,6 +115,7 @@ pub struct RoomOp {
     pub org_id: String,  // hex of the org's root operation hash
     pub name: String,
     pub enc_key_epoch: u64,
+    pub room_type: String, // "text" | "voice"
 }
 
 #[derive(Debug, Serialize, Deserialize)]

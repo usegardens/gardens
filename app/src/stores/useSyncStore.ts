@@ -11,6 +11,52 @@ import { create } from 'zustand';
 import { ingestOp, getTopicSeq } from '../ffi/gardensCore';
 import { ingestEmailOp } from './useInboxStore';
 import { blake3 } from '@noble/hashes/blake3';
+import { logSyncSend, logSyncReceive } from './useDebugStore';
+
+// Simple TextDecoder alternative for converting bytes to string
+function decodeUtf8(bytes: Uint8Array): string {
+  let result = '';
+  for (let i = 0; i < bytes.length; i++) {
+    result += String.fromCharCode(bytes[i]);
+  }
+  return result;
+}
+
+// Simple base64 encoding/decoding without browser globals
+function toBase64(bytes: Uint8Array): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes[i] ?? 0;
+    const b2 = bytes[i + 1] ?? 0;
+    const b3 = bytes[i + 2] ?? 0;
+    result += chars[b1 >> 2];
+    result += chars[((b1 & 0x03) << 4) | (b2 >> 4)];
+    result += chars[((b2 & 0x0f) << 2) | (b3 >> 6)];
+    result += chars[b3 & 0x3f];
+  }
+  const padding = bytes.length % 3;
+  if (padding > 0) {
+    result = result.slice(0, -padding) + (padding === 1 ? '==' : '=');
+  }
+  return result;
+}
+
+function fromBase64(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const cleaned = base64.replace(/[^A-Za-z0-9+/]/g, '').replace(/=+$/, '');
+  const bytes: number[] = [];
+  for (let i = 0; i < cleaned.length; i += 4) {
+    const b1 = chars.indexOf(cleaned[i]);
+    const b2 = chars.indexOf(cleaned[i + 1]);
+    const b3 = chars.indexOf(cleaned[i + 2]);
+    const b4 = chars.indexOf(cleaned[i + 3]);
+    bytes.push((b1 << 2) | (b2 >> 4));
+    if (b3 !== -1) bytes.push(((b2 & 0x0f) << 4) | (b3 >> 2));
+    if (b4 !== -1) bytes.push(((b3 & 0x03) << 6) | b4);
+  }
+  return new Uint8Array(bytes);
+}
 
 export const DEFAULT_SYNC_URL = 'https://gardens-sync.stereos.workers.dev';
 
@@ -52,9 +98,11 @@ export function deriveOrgAdminTopicHex(orgId: string): string {
 
 /** Post a p2panda op to the sync worker for a given topic. Fire-and-forget. */
 export function broadcastOp(topicHex: string, opBytes: Uint8Array, syncUrl = DEFAULT_SYNC_URL): void {
-  let binary = '';
-  for (let i = 0; i < opBytes.length; i++) binary += String.fromCharCode(opBytes[i]);
-  const opBase64 = btoa(binary);
+  const opBase64 = toBase64(opBytes);
+  
+  // Log sync send event (development only)
+  logSyncSend(topicHex, opBytes);
+  
   fetch(`${syncUrl}/deliver`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -101,29 +149,38 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       const ws = new WebSocket(`${wsUrl}/topic/${topicHex}?since=${since}`);
       console.log(`[sync] subscribed topic=${topicHex.slice(0, 16)}… since=${since}`);
 
-      ws.onmessage = async (event: MessageEvent) => {
+      ws.onmessage = async (event: any) => {
         try {
-          const msg = JSON.parse(event.data as string) as {
+          const msg = JSON.parse(event.data) as {
             type: string;
             seq?: number;
             data?: string;
           };
           if (msg.type === 'op' && msg.seq != null && msg.data) {
             console.log(`[sync] op received on topic ${topicHex.slice(0, 16)}… seq=${msg.seq} bytes=${msg.data.length}`);
-            const binary = atob(msg.data);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            
+            // Log sync receive event (development only)
+            logSyncReceive(topicHex, msg.seq, msg.data.length);
+            
+            const bytes = fromBase64(msg.data);
             try {
               await ingestOp(topicHex, msg.seq, bytes);
               console.log(`[sync] ingestOp OK topic=${topicHex.slice(0, 16)}… seq=${msg.seq}`);
-            } catch (ingestErr) {
-              console.warn(`[sync] ingestOp FAILED topic=${topicHex.slice(0, 16)}… seq=${msg.seq}`, ingestErr);
+            } catch (ingestErr: any) {
+              // Ignore duplicate operation errors - they're expected when re-syncing
+              const errMsg = ingestErr?.message || String(ingestErr);
+              if (errMsg.includes('UNIQUE constraint') || errMsg.includes('operations_v1.hash')) {
+                console.log(`[sync] ingestOp SKIPPED (duplicate) topic=${topicHex.slice(0, 16)}… seq=${msg.seq}`);
+              } else {
+                console.warn(`[sync] ingestOp FAILED topic=${topicHex.slice(0, 16)}… seq=${msg.seq}`, ingestErr);
+              }
             }
             try {
-              const decoded = atob(msg.data);
-              const parsed = JSON.parse(decoded);
+              const decoded = fromBase64(msg.data);
+              const decodedStr = decodeUtf8(decoded);
+              const parsed = JSON.parse(decodedStr);
               if (parsed?.op_type === 'receive_email') {
-                ingestEmailOp(decoded);
+                ingestEmailOp(decodedStr);
               }
             } catch {
               // not an email op

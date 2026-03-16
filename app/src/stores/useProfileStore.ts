@@ -12,6 +12,7 @@ import {
 } from '../ffi/gardensCore';
 import { getDmProfile } from './useDmProfileStore';
 import { useAuthStore } from './useAuthStore';
+import { broadcastOp } from './useSyncStore';
 
 export type { Profile };
 
@@ -198,7 +199,15 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         }
       }
     }
-    await dcCreateOrUpdateProfile(username, bio, availableFor, isPublic, avatarBlobId, emailEnabled);
+    const result = await dcCreateOrUpdateProfile(username, bio, availableFor, isPublic, avatarBlobId, emailEnabled);
+    // Broadcast the profile operation to sync with other peers
+    if (result.opBytes?.length) {
+      // Profile ops are broadcast to the user's own topic for sync
+      const myKey = useAuthStore.getState().keypair?.publicKeyHex;
+      if (myKey) {
+        broadcastOp(myKey, result.opBytes);
+      }
+    }
     await get().fetchMyProfile();
   },
 

@@ -14,6 +14,7 @@ import {
   getBlob,
   type OrgSummary,
   type Room,
+  type RoomType,
 } from '../ffi/gardensCore';
 
 import { uploadBlobToRelay, DEFAULT_RELAY_URL } from './useProfileStore';
@@ -52,7 +53,7 @@ interface OrgsState {
   ): Promise<void>;
   deleteOrg(orgId: string): Promise<void>;
   fetchRooms(orgId: string, includeArchived?: boolean): Promise<void>;
-  createRoom(orgId: string, name: string): Promise<string>;
+  createRoom(orgId: string, name: string, roomType?: RoomType): Promise<string>;
   updateRoom(orgId: string, roomId: string, name?: string, roomCooldownSecs?: number): Promise<void>;
   deleteRoom(orgId: string, roomId: string): Promise<void>;
   archiveRoom(orgId: string, roomId: string): Promise<void>;
@@ -170,8 +171,8 @@ export const useOrgsStore = create<OrgsState>((set, get) => ({
     set(s => ({ rooms: { ...s.rooms, [orgId]: rooms } }));
   },
 
-  async createRoom(orgId, name) {
-    const roomId = await dcCreateRoom(orgId, name);
+  async createRoom(orgId, name, roomType = 'text') {
+    const roomId = await dcCreateRoom(orgId, name, roomType);
     await get().fetchRooms(orgId);
     return roomId;
   },

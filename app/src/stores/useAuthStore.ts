@@ -95,8 +95,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     const kp = await generateKeypair();
     await persistKeypair(kp);
     await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true');
-    await initCore(kp.privateKeyHex);
-    await initNetwork(null);
+    try {
+      await initCore(kp.privateKeyHex);
+      await initNetwork(null);
+    } catch (err) {
+      console.error('[auth] Failed to initialize core/network:', err);
+      throw err;
+    }
     set({ keypair: kp, isUnlocked: true, hasStoredKey: true });
     return kp;
   },
@@ -105,8 +110,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     const kp = await importFromMnemonic(words);
     await persistKeypair(kp);
     await AsyncStorage.setItem(HAS_ACCOUNT_KEY, 'true');
-    await initCore(kp.privateKeyHex);
-    await initNetwork(null);
+    try {
+      await initCore(kp.privateKeyHex);
+      await initNetwork(null);
+    } catch (err) {
+      console.error('[auth] Failed to initialize core/network:', err);
+      throw err;
+    }
     set({ keypair: kp, isUnlocked: true, hasStoredKey: true });
     return kp;
   },

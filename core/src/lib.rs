@@ -324,6 +324,12 @@ pub struct OrgSummary {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub enum RoomType {
+    Text,
+    Voice,
+}
+
 pub struct Room {
     pub room_id: String,
     pub org_id: String,
@@ -334,6 +340,7 @@ pub struct Room {
     pub is_archived: bool,
     pub archived_at: Option<i64>,
     pub room_cooldown_secs: Option<i64>,
+    pub room_type: RoomType,
 }
 
 pub struct Event {
@@ -438,6 +445,7 @@ fn room_from_row(row: RoomRow) -> Room {
         is_archived: row.is_archived,
         archived_at: row.archived_at,
         room_cooldown_secs: row.room_cooldown_secs,
+        room_type: row.room_type,
     }
 }
 
@@ -529,7 +537,7 @@ pub fn create_or_update_profile(
     is_public: bool,
     avatar_blob_id: Option<String>,
     email_enabled: bool,
-) -> Result<(), CoreError> {
+) -> Result<Vec<u8>, CoreError> {
     store::block_on(async move {
         let core = store::get_core().ok_or(CoreError::NotInitialised)?;
         let pool = &core.read_pool;
@@ -542,16 +550,16 @@ pub fn create_or_update_profile(
             Some(buf)
         });
 
-        {
+        let gossip_bytes = {
             let mut op_store = core.op_store.lock().await;
-            ops::publish(
+            let (_, bytes) = ops::publish(
                 &mut op_store,
                 &core.private_key,
                 ops::log_ids::PROFILE,
                 &ops::ProfileOp {
                     op_type: "create_profile".into(),
                     username: username.clone(),
-                    avatar_blob_id: None,
+                    avatar_blob_id: avatar_blob_id.clone(),
                     bio: bio.clone(),
                     available_for: available_for.clone(),
                     is_public,
@@ -559,7 +567,8 @@ pub fn create_or_update_profile(
                 },
             )
             .await?;
-        }
+            bytes
+        };
 
         let now = now_micros();
         let existing = db::get_profile(pool, &core.public_key_hex).await?;
@@ -609,7 +618,7 @@ pub fn create_or_update_profile(
             }
         }
         
-        Ok(())
+        Ok(gossip_bytes)
     })
 }
 
@@ -687,6 +696,7 @@ pub fn create_org(
                     org_id: org_hash.to_hex(),
                     name: "general".into(),
                     enc_key_epoch: 0,
+                    room_type: "text".into(),
                 },
             )
             .await?.0;
@@ -729,6 +739,7 @@ pub fn create_org(
                 is_archived: false,
                 archived_at: None,
                 room_cooldown_secs: None,
+                room_type: RoomType::Text,
             },
         )
         .await?;
@@ -803,9 +814,11 @@ pub fn list_my_orgs() -> Vec<OrgSummary> {
 
 // ── Rooms ─────────────────────────────────────────────────────────────────────
 
-pub fn create_room(org_id: String, name: String) -> Result<String, CoreError> {
-    // Validate channel name is sluggified before proceeding
-    validate_channel_name(&name)?;
+pub fn create_room(org_id: String, name: String, room_type: RoomType) -> Result<String, CoreError> {
+    // Validate channel name is sluggified before proceeding (skip for voice channels)
+    if room_type == RoomType::Text {
+        validate_channel_name(&name)?;
+    }
 
     store::block_on(async move {
         let core = store::get_core().ok_or(CoreError::NotInitialised)?;
@@ -822,6 +835,10 @@ pub fn create_room(org_id: String, name: String) -> Result<String, CoreError> {
                     org_id: org_id.clone(),
                     name: name.clone(),
                     enc_key_epoch: 0,
+                    room_type: match room_type {
+                        RoomType::Text => "text".into(),
+                        RoomType::Voice => "voice".into(),
+                    },
                 },
             )
             .await?.0
@@ -842,6 +859,7 @@ pub fn create_room(org_id: String, name: String) -> Result<String, CoreError> {
                 is_archived: false,
                 archived_at: None,
                 room_cooldown_secs: None,
+                room_type: room_type.clone(),
             },
         )
         .await?;
@@ -1383,9 +1401,11 @@ pub fn update_room(
             return Err(CoreError::InvalidInput("room does not belong to this organization".into()));
         }
 
-        // Validate name if provided
+        // Validate name if provided (skip for voice channels)
         if let Some(ref n) = name {
-            validate_channel_name(n)?;
+            if room.room_type != RoomType::Voice {
+                validate_channel_name(n)?;
+            }
         }
 
         // Publish update operation
@@ -2306,15 +2326,207 @@ pub struct OrgAdminThread {
     pub is_request: bool,
 }
 
-pub fn create_org_admin_thread(_org_id: String, _admin_key: String) -> Result<SendResult, CoreError> {
-    Err(CoreError::DbError("Not implemented".into()))
+pub fn create_org_admin_thread(org_id: String, admin_key: String) -> Result<SendResult, CoreError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(CoreError::NotInitialised)?;
+        let pool = &core.read_pool;
+
+        // Check if thread already exists
+        let existing = sqlx::query(
+            "SELECT thread_id FROM dm_threads WHERE initiator_key = ? AND recipient_key = ?"
+        )
+        .bind(&core.public_key_hex)
+        .bind(&admin_key)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| CoreError::DbError(e.to_string()))?;
+
+        if let Some(row) = existing {
+            let thread_id: String = row.get("thread_id");
+            return Ok(SendResult { id: thread_id, op_bytes: vec![] });
+        }
+
+        let (op_hash, gossip_bytes) = {
+            let mut op_store = core.op_store.lock().await;
+            ops::publish(
+                &mut op_store,
+                &core.private_key,
+                ops::log_ids::DM_THREAD,
+                &ops::DmThreadOp {
+                    op_type: "create_thread".into(),
+                    recipient_key: admin_key.clone(),
+                },
+            )
+            .await?
+        };
+
+        let thread_id = op_hash.to_hex();
+        let now = now_micros();
+
+        // Create the DM thread with the org admin as recipient
+        // Mark as request so it shows in requests inbox
+        db::insert_dm_thread(
+            pool,
+            &DmThreadRow {
+                thread_id: thread_id.clone(),
+                initiator_key: core.public_key_hex.clone(),
+                recipient_key: admin_key.clone(),
+                created_at: now,
+                last_message_at: None,
+                is_request: true,
+            },
+        )
+        .await?;
+
+        // Gossip DM thread creation to admin inbox with p2panda encryption
+        if network::is_initialized().await {
+            if let Ok(topic_id) = topic_id_from_hex(&admin_key) {
+                let mut bootstrap = vec![];
+                if let Ok(peer) = endpoint_id_from_hex(&admin_key) {
+                    bootstrap.push(peer);
+                }
+                if let Ok(peer) = endpoint_id_from_hex(&core.public_key_hex) {
+                    bootstrap.push(peer);
+                }
+
+                let sender_pk = core.private_key.public_key();
+                if let Ok(recipient_bytes) = hex_to_bytes_32(&admin_key) {
+                    // Use p2panda sealed sender for encryption
+                    if let Ok(sealed) =
+                        sealed_sender::seal(&gossip_bytes, sender_pk.as_bytes(), &recipient_bytes)
+                    {
+                        if let Err(e) = network::gossip_publish(
+                            topic_id,
+                            network::GossipTopicKind::DmInbox,
+                            bootstrap,
+                            sealed,
+                        )
+                        .await
+                        {
+                            log::warn!("[gossip] failed to publish org admin thread: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(SendResult { id: thread_id, op_bytes: gossip_bytes })
+    })
 }
 
 pub fn list_org_admin_threads(_org_id: String) -> Vec<OrgAdminThread> { vec![] }
 pub fn list_my_org_admin_threads() -> Vec<OrgAdminThread> { vec![] }
 
-pub fn join_public_org(_org_id: String, _org_pubkey_z32: String, _join_sig_b64: String) -> Result<SendResult, AuthError> {
-    Err(AuthError::Unauthorized("Not implemented".into()))
+/// Join a public organization using its z32 public key.
+/// Anyone can join a public org by knowing its public key - no invite required.
+/// This handles the encryption flow for new members (DCGKA key rotation).
+pub fn join_public_org(org_id: String, org_pubkey_z32: String, _join_sig_b64: String) -> Result<SendResult, AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        let pool = &core.read_pool;
+
+        // Verify the org exists and is public by looking it up
+        let org_row = db::get_org(pool, &org_id).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?
+            .ok_or_else(|| AuthError::Unauthorized("organization not found".into()))?;
+
+        // Verify the provided z32 key matches the org's public key
+        if let Some(actual_z32) = &org_row.org_pubkey {
+            if actual_z32 != &org_pubkey_z32 {
+                return Err(AuthError::Unauthorized("org key mismatch".into()));
+            }
+        } else {
+            return Err(AuthError::Unauthorized("org public key not available".into()));
+        }
+
+        // Check if already a member
+        let existing = db::get_membership_access_level(pool, &org_id, &core.public_key_hex).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        if existing.is_some() {
+            return Err(AuthError::Unauthorized("already a member".into()));
+        }
+
+        // Add current user as member with default "read" access level
+        let my_key = core.private_key.public_key();
+        let my_key_hex = my_key.to_hex();
+        let now = now_micros();
+        let access_level = auth::AccessLevel::Read;
+
+        // Add to local membership state
+        let mut state = get_org_membership_state(&org_id).await?;
+        state.add_member(my_key, access_level);
+
+        // Sign and store the membership op
+        let membership_op = ops::MembershipOp {
+            op_type: "add_member".into(),
+            org_id: org_id.clone(),
+            member_key: my_key_hex.clone(),
+            moderator_key: my_key_hex.clone(),
+            access_level: Some(access_level.as_str().to_string()),
+            cooldown_secs: None,
+            iced_until: None,
+        };
+
+        let payload = ops::encode_cbor(&membership_op)
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        let mut store_guard = core.op_store.lock().await;
+        let (_op_hash, gossip_bytes) = ops::sign_and_store_op(
+            &mut *store_guard,
+            &core.private_key,
+            ops::log_ids::MEMBERSHIP,
+            payload,
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        // Persist membership in the read model
+        db::upsert_membership(
+            pool,
+            &org_id,
+            &my_key_hex,
+            access_level.as_str(),
+            now,
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        // Add new member to all room encryption groups (DCGKA key rotation)
+        // This ensures the new member can decrypt historical messages
+        let rooms = db::list_rooms(pool, &org_id, false).await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        for room in rooms {
+            // Try to add member to room encryption group
+            match encryption::add_member_to_room_group(&room.room_id, my_key).await {
+                Ok(Some(ctrl_bytes)) => {
+                    // Publish the encryption control message
+                    let _ = encryption::publish_enc_ctrl_op(&format!("room:{}", room.room_id), ctrl_bytes).await;
+                    log::info!("[join_public_org] added member to room encryption group: {}", room.room_id);
+                }
+                Ok(None) => {
+                    // No existing group state - initialize it with the new member
+                    let initial_members = vec![my_key];
+                    if let Err(e) = encryption::init_room_group(&room.room_id, initial_members).await {
+                        log::warn!("[join_public_org] failed to init room group for {}: {}", room.room_id, e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[join_public_org] failed to add member to room {}: {}", room.room_id, e);
+                }
+            }
+        }
+
+        // Join the org's gossip topic
+        if network::is_initialized().await {
+            let org_topic = pkarr_publish::topic_id_from_org_id(&org_id);
+            if let Ok(topic_id) = org_topic {
+                let _ = network::gossip_join(topic_id, network::GossipTopicKind::Org, vec![]).await;
+            }
+        }
+
+        Ok(SendResult { id: org_id, op_bytes: gossip_bytes })
+    })
 }
 
 pub fn accept_message_request(thread_id: String) -> Result<(), AuthError> {
@@ -2418,7 +2630,7 @@ pub fn leave_org(org_id: String) -> Result<SendResult, CoreError> {
     })
 }
 
-async fn room_gossip_context(
+pub async fn room_gossip_context(
     core: &store::GardensCore,
     room_id: &str,
 ) -> Result<([u8; 32], Vec<iroh::EndpointId>), CoreError> {
@@ -2443,7 +2655,7 @@ async fn room_gossip_context(
     Ok((topic_id, peers))
 }
 
-async fn dm_gossip_context(
+pub async fn dm_gossip_context(
     core: &store::GardensCore,
     dm_thread_id: &str,
 ) -> Result<([u8; 32], Vec<iroh::EndpointId>, String), CoreError> {
@@ -2825,6 +3037,140 @@ pub fn claim_invite_token(token_base64: String) -> Result<SendResult, AuthError>
 
         Ok(SendResult { id: org_id, op_bytes: gossip_bytes })
     })
+}
+
+/// One-time invite code for orgs - anyone can create, single-use.
+/// This allows org members (any access level) to generate invite links.
+pub fn create_one_time_invite_code(
+    org_id: String,
+    access_level: String,
+) -> Result<String, AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        let pool = &core.read_pool;
+
+        // Verify the user is a member of the org (any access level)
+        let membership = db::get_membership_access_level(pool, &org_id, &core.public_key_hex)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+        
+        if membership.is_none() {
+            return Err(AuthError::Unauthorized("must be a member to create invite codes".into()));
+        }
+
+        // Generate a random code
+        let code = generate_random_code();
+        let now = now_micros();
+
+        db::create_org_invite_code(
+            pool,
+            &code,
+            &org_id,
+            &core.public_key_hex,
+            &access_level,
+            now,
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        Ok(code)
+    })
+}
+
+/// Verify a one-time invite code (check if valid and unclaimed).
+pub fn verify_one_time_invite_code(code: String) -> Result<InviteTokenInfo, AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        
+        let invite = db::get_org_invite_code(&core.read_pool, &code)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?
+            .ok_or_else(|| AuthError::Unauthorized("invalid invite code".into()))?;
+
+        // Check if already claimed
+        if invite.claimed_by.is_some() {
+            return Err(AuthError::Unauthorized("invite code already used".into()));
+        }
+
+        Ok(InviteTokenInfo {
+            org_id: invite.org_id,
+            inviter_key: invite.creator_key,
+            access_level: invite.access_level,
+            expiry_timestamp: 0, // One-time codes don't expire
+        })
+    })
+}
+
+/// Claim a one-time invite code and join the org.
+pub fn claim_one_time_invite_code(code: String) -> Result<SendResult, AuthError> {
+    store::block_on(async move {
+        let core = store::get_core().ok_or(AuthError::NotInitialised)?;
+        let pool = &core.read_pool;
+        let now = now_micros();
+
+        // Claim the invite code
+        let invite = db::claim_org_invite_code(pool, &code, &core.public_key_hex, now)
+            .await
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?
+            .ok_or_else(|| AuthError::Unauthorized("invalid or already used invite code".into()))?;
+
+        let org_id = invite.org_id.clone();
+        let access_level = auth::AccessLevel::from_str(&invite.access_level)
+            .ok_or_else(|| AuthError::Unauthorized("invalid access level in invite".into()))?;
+
+        // Add current user as member
+        let my_key = core.private_key.public_key();
+        let my_key_hex = my_key.to_hex();
+
+        // Get the org's membership state and add member
+        let mut state = get_org_membership_state(&org_id).await?;
+        state.add_member(my_key, access_level);
+
+        // Sign and store the membership op
+        let membership_op = ops::MembershipOp {
+            op_type: "add_member".into(),
+            org_id: org_id.clone(),
+            member_key: my_key_hex.clone(),
+            moderator_key: my_key_hex.clone(),
+            access_level: Some(access_level.as_str().to_string()),
+            cooldown_secs: None,
+            iced_until: None,
+        };
+
+        let payload = ops::encode_cbor(&membership_op)
+            .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        let mut store_guard = core.op_store.lock().await;
+        let (_op_hash, gossip_bytes) = ops::sign_and_store_op(
+            &mut *store_guard,
+            &core.private_key,
+            ops::log_ids::MEMBERSHIP,
+            payload,
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        // Persist membership in the read model
+        db::upsert_membership(
+            pool,
+            &org_id,
+            &my_key_hex,
+            access_level.as_str(),
+            now,
+        )
+        .await
+        .map_err(|e| AuthError::Unauthorized(e.to_string()))?;
+
+        Ok(SendResult { id: org_id, op_bytes: gossip_bytes })
+    })
+}
+
+/// Generate a random invite code.
+fn generate_random_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::rngs::OsRng;
+    let bytes: [u8; 16] = rng.gen();
+    hex::encode(bytes)
 }
 
 /// Remove a member from an organization.

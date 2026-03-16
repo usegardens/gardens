@@ -378,11 +378,15 @@ class GardensCoreModule(private val reactContext: ReactApplicationContext) : Rea
   // ── Rooms ─────────────────────────────────────────────────────────────────────
 
   @ReactMethod
-  fun createRoom(orgId: String, name: String, promise: Promise) {
+  fun createRoom(orgId: String, name: String, roomType: String, promise: Promise) {
     ensureLoaded()
     scope.launch {
       try {
-        val roomId = uniffi.gardens_core.createRoom(orgId, name)
+        val rt = when (roomType) {
+          "voice" -> uniffi.gardens_core.RoomType.VOICE
+          else -> uniffi.gardens_core.RoomType.TEXT
+        }
+        val roomId = uniffi.gardens_core.createRoom(orgId, name, rt)
         promise.resolve(roomId)
       } catch (e: Exception) {
         promise.reject("CoreError", e)

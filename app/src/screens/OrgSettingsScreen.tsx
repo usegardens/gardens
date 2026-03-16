@@ -112,36 +112,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function ToggleRow({
-  label,
-  description,
-  value,
-  onChange,
-  disabled,
-}: {
-  label: string;
-  description?: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <View style={s.row}>
-      <View style={s.rowContent}>
-        <Text style={s.rowLabel}>{label}</Text>
-        {description && <Text style={s.rowDesc}>{description}</Text>}
-      </View>
-      <Switch
-        value={value}
-        onValueChange={onChange}
-        disabled={disabled}
-        trackColor={{ false: '#333', true: '#3b82f6' }}
-        thumbColor="#fff"
-      />
-    </View>
-  );
-}
-
 export function OrgSettingsScreen({ route, navigation }: Props) {
   const { orgId, orgName } = route.params;
   const { orgs, rooms, updateOrg, fetchMyOrgs, fetchRooms, deleteOrg: deleteOrgFromStore, leaveOrg } = useOrgsStore();
@@ -152,10 +122,8 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
   const [isUploadingIcon, setIsUploadingIcon] = useState(false);
   const [coverBlobId, setCoverBlobId] = useState<string | null>(null);
   const [avatarBlobId, setAvatarBlobId] = useState<string | null>(null);
-  const [isPublic, setIsPublic] = useState(false);
   const [orgEmailEnabled, setOrgEmailEnabled] = useState(false);
   const [pkarrUrl, setPkarrUrl] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const { profileSlugUrl } = useProfileStore();
   const [loading, setLoading] = useState(true);
   const [memberCount, setMemberCount] = useState(0);
@@ -181,7 +149,6 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
     if (org) {
       setCoverBlobId(org.coverBlobId);
       setAvatarBlobId(org.avatarBlobId);
-      setIsPublic(org.isPublic);
       setOrgEmailEnabled(org.emailEnabled ?? false);
       setWelcomeDraft(org.welcomeText ?? '');
       setOrgCooldownDraft(org.orgCooldownSecs?.toString() ?? '');
@@ -229,30 +196,6 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
       // Failed to load member count
     }
   }
-
-  const handleTogglePublic = async (value: boolean) => {
-    setSaving(true);
-    try {
-      console.log('[OrgSettings] toggle public ->', { orgId, value });
-      await updateOrg(orgId, null, null, null, null, null, null, null, null, value);
-      setIsPublic(value);
-      await fetchMyOrgs();
-      const refreshed = useOrgsStore.getState().orgs.find(o => o.orgId === orgId);
-      console.log('[OrgSettings] after fetchMyOrgs isPublic =', refreshed?.isPublic);
-      
-      if (value) {
-        Alert.alert(
-          'Public Organization Enabled',
-          'Your organization is now published to the DHT and can be discovered by others.'
-        );
-      }
-    } catch (err: any) {
-      Alert.alert('Error', err.message || 'Failed to update organization');
-      setIsPublic(!value);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const handleToggleOrgEmail = async (value: boolean) => {
     setOrgEmailEnabled(value);
@@ -561,7 +504,8 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
         return;
       }
       setEmojiStatus('Uploading emoji...');
-      const blobId = await uploadBlob(uint8Array, mimeType, emojiRoomId);
+      // Store unencrypted - custom emoji are org-level metadata accessible to all members
+      const blobId = await uploadBlob(uint8Array, mimeType, null);
       if (!blobId) {
         Alert.alert('Error', 'Failed to upload emoji');
         return;
@@ -689,19 +633,25 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
           onPress={handleEditOrg}
         />
         
-        <ToggleRow
-          label="Public Organization"
-          description="Publish to DHT for discovery"
-          value={isPublic}
-          onChange={handleTogglePublic}
-          disabled={saving}
-        />
-        {saving && (
-          <View style={s.savingRow}>
-            <ActivityIndicator size="small" color="#888" />
-            <Text style={s.savingText}>Updating...</Text>
-          </View>
-        )}
+        <View style={s.cardContainer}>
+          <Text style={s.cardLabel}>Organization Key</Text>
+          <Text style={s.cardDescription}>
+            Share this key with others so they can join your organization.
+          </Text>
+          {pkarrUrl && (
+            <>
+              <PublicIdentityCard
+                pkarrUrl={pkarrUrl}
+                publicKeyHex={org?.orgPubkey || org?.creatorKey || ''}
+                label="Organization Public Profile"
+                publicLinkOverride={profileSlugUrl || undefined}
+              />
+              <TouchableOpacity style={s.shareBtn} onPress={handleShareCommunity}>
+                <Text style={s.shareBtnText}>🔗 Share Community Link</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
         
         <SettingsRow
           label="Location"
@@ -718,19 +668,6 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
             }, 1000);
           }}
         />
-        {isPublic && org && pkarrUrl && (
-          <View style={s.cardContainer}>
-            <PublicIdentityCard
-              pkarrUrl={pkarrUrl}
-              publicKeyHex={org.orgPubkey || org.creatorKey}
-              label="Organization Public Profile"
-              publicLinkOverride={profileSlugUrl || undefined}
-            />
-            <TouchableOpacity style={s.shareBtn} onPress={handleShareCommunity}>
-              <Text style={s.shareBtnText}>🔗 Share Community Link</Text>
-            </TouchableOpacity>
-          </View>
-        )}
       </Section>
 
       <Section title="Email">
@@ -904,9 +841,9 @@ export function OrgSettingsScreen({ route, navigation }: Props) {
 
       <Section title="Members">
         <SettingsRow
-          label="Add Members"
-          description="Invite via NFC, QR code, or public key"
-          onPress={() => navigation.navigate('AddMember', { orgId, orgName })}
+          label="Invite Members"
+          description="Share the organization key to invite others"
+          onPress={() => navigation.navigate('OrgInvite', { orgId, orgName })}
         />
         <SettingsRow
           label="Roles & Permissions"
@@ -1165,6 +1102,16 @@ const s = StyleSheet.create({
   cardContainer: {
     padding: 12,
     backgroundColor: '#0a0a0a',
+  },
+  cardLabel: {
+    color: '#aaa',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  cardDescription: {
+    color: '#666',
+    fontSize: 11,
+    marginBottom: 12,
   },
 
   shareBtn: {

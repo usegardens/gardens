@@ -50,7 +50,8 @@ export function FabSheet(props: SheetProps<'fab-sheet'>) {
     if (!orgName.trim()) return;
     setBusy(true);
     try {
-      const orgId = await createOrg(orgName.trim(), 'Group', null, false);
+      // Create as public org so it gets published to pkarr and is discoverable
+      const orgId = await createOrg(orgName.trim(), 'Group', null, true);
       await fetchMyOrgs();
       close();
       navigation.navigate('OrgChat', { orgId, orgName: orgName.trim() });
@@ -144,10 +145,10 @@ export function FabSheet(props: SheetProps<'fab-sheet'>) {
               openJoinOrgSheet().catch(() => {});
             }}
           >
-            <View style={fs.iconCircle}><Text style={fs.iconChar}>QR</Text></View>
+            <View style={fs.iconCircle}><Text style={fs.iconChar}>🔑</Text></View>
             <View style={fs.rowCopy}>
-              <Text style={fs.rowTitle}>Join Org</Text>
-              <Text style={fs.rowSub}>Open an invite link or org code</Text>
+              <Text style={fs.rowTitle}>Join Public Org</Text>
+              <Text style={fs.rowSub}>Enter a public organization key</Text>
             </View>
             <ChevronRight size={16} color="#555" />
           </TouchableOpacity>

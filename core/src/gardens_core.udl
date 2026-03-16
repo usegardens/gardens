@@ -12,7 +12,7 @@ namespace gardens_core {
 
     // ── Phase 2: Profile ───────────────────────────────────────────────────
     [Throws=CoreError]
-    void create_or_update_profile(string username, string? bio, sequence<string> available_for, boolean is_public, string? avatar_blob_id, boolean email_enabled);
+    bytes create_or_update_profile(string username, string? bio, sequence<string> available_for, boolean is_public, string? avatar_blob_id, boolean email_enabled);
 
     Profile? get_my_profile();
 
@@ -60,7 +60,7 @@ namespace gardens_core {
 
     // ── Phase 2: Rooms ─────────────────────────────────────────────────────
     [Throws=CoreError]
-    string create_room(string org_id, string name);
+    string create_room(string org_id, string name, RoomType room_type);
 
     sequence<Room> list_rooms(string org_id, boolean include_archived);
 
@@ -219,6 +219,20 @@ namespace gardens_core {
     [Throws=AuthError]
     SendResult claim_invite_token(string token_base64);
 
+    /// Generate a one-time invite code that can only be used once.
+    /// Returns the one-time code as a string.
+    [Throws=AuthError]
+    string create_one_time_invite_code(string org_id, string access_level);
+
+    /// Verify a one-time invite token without claiming it.
+    /// Returns the invite token info if valid.
+    [Throws=AuthError]
+    InviteTokenInfo verify_one_time_invite_code(string code);
+
+    /// Claim a one-time invite code to join an org.
+    [Throws=AuthError]
+    SendResult claim_one_time_invite_code(string code);
+
     [Throws=AuthError]
     SendResult join_public_org(string org_id, string org_pubkey_z32, string join_sig_b64);
 
@@ -342,6 +356,11 @@ dictionary KeyPair {
 
 // ── Phase 2 types ─────────────────────────────────────────────────────────────
 
+enum RoomType {
+    "Text",
+    "Voice"
+};
+
 [Error]
 enum CoreError {
     "NotInitialised",
@@ -408,6 +427,7 @@ dictionary Room {
     boolean is_archived;
     i64? archived_at;
     i64? room_cooldown_secs;
+    RoomType room_type;
 };
 
 dictionary Event {

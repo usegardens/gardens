@@ -5,6 +5,23 @@ import { BlobImage } from './BlobImage';
 import { BlobVideo } from './BlobVideo';
 import { getBlob } from '../ffi/gardensCore';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
+import { LinkPreviewCard, extractUrls } from './LinkPreview';
+
+// Base64 encode without btoa (React Native compatible)
+function base64Encode(bytes: Uint8Array): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes[i];
+    const b2 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b3 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    result += chars[b1 >> 2];
+    result += chars[((b1 & 3) << 4) | (b2 >> 4)];
+    result += i + 1 < bytes.length ? chars[((b2 & 15) << 2) | (b3 >> 6)] : '=';
+    result += i + 2 < bytes.length ? chars[b3 & 63] : '=';
+  }
+  return result;
+}
 
 interface Props {
   message: Message;
@@ -24,6 +41,8 @@ function avatarColor(seed: string): string {
 
 function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string | null }) {
   const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
   const playerRef = React.useRef<AudioRecorderPlayer | null>(null);
 
   async function toggle() {
@@ -34,13 +53,16 @@ function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string |
     } else {
       try {
         const bytes = await getBlob(blobHash, roomId);
-        const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join('');
-        const uri = `data:audio/m4a;base64,${btoa(binary)}`;
+        const base64 = base64Encode(bytes);
+        const uri = `data:audio/m4a;base64,${base64}`;
         const player = new AudioRecorderPlayer();
         playerRef.current = player;
         player.addPlayBackListener((e) => {
+          setProgress(e.currentPosition);
+          setDuration(e.duration);
           if (e.isFinished) {
             setPlaying(false);
+            setProgress(0);
             player.stopPlayer();
             player.removePlayBackListener();
           }
@@ -53,10 +75,32 @@ function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string |
     }
   }
 
+  const progressPercent = duration > 0 ? (progress / duration) * 100 : 0;
+
   return (
     <TouchableOpacity style={styles.audioBtn} onPress={toggle}>
-      <Text style={styles.audioBtnText}>{playing ? '⏸' : '▶'}</Text>
-      <Text style={styles.audioLabel}>Voice message</Text>
+      <View style={styles.audioPlayer}>
+        <View style={styles.playButton}>
+          <Text style={styles.audioBtnText}>{playing ? '⏸' : '▶'}</Text>
+        </View>
+        <View style={styles.waveformContainer}>
+          <View style={styles.waveform}>
+            {[...Array(20)].map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.waveformBar,
+                  { height: 8 + ((i * 7) % 16) },
+                  i / 20 * 100 <= progressPercent && styles.waveformBarActive,
+                ]}
+              />
+            ))}
+          </View>
+          <Text style={styles.audioLabel}>
+            {playing ? `${Math.floor(progress / 1000)}s` : 'Voice message'}
+          </Text>
+        </View>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -102,9 +146,14 @@ export function MessageBubble({ message, isOwnMessage, avatarBlobId, onReply, on
           )}
 
           {message.contentType === 'text' && message.textContent && (
-            <Text style={[styles.text, isOwnMessage && styles.textOwn]}>
-              {message.textContent}
-            </Text>
+            <>
+              <Text style={[styles.text, isOwnMessage && styles.textOwn]}>
+                {message.textContent}
+              </Text>
+              {extractUrls(message.textContent).slice(0, 1).map((url) => (
+                <LinkPreviewCard key={url} url={url} />
+              ))}
+            </>
           )}
 
           {message.contentType === 'image' && message.blobId && (
@@ -188,6 +237,12 @@ const styles = StyleSheet.create({
   replyBtnText: { color: '#fff', fontSize: 16 },
   mediaBlobImage: { width: '100%', minHeight: 160, borderRadius: 8 },
   audioBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  audioPlayer: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  playButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#3b82f6', alignItems: 'center', justifyContent: 'center' },
+  waveformContainer: { flex: 1, gap: 4 },
+  waveform: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 24 },
+  waveformBar: { width: 3, backgroundColor: '#555', borderRadius: 1.5 },
+  waveformBarActive: { backgroundColor: '#3b82f6' },
   audioBtnText: { color: '#fff', fontSize: 20 },
   audioLabel: { color: '#ddd', fontSize: 13 },
 });

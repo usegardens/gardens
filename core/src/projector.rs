@@ -19,7 +19,7 @@ use p2panda_store::LogStore;
 use sqlx::SqlitePool;
 
 use crate::db::{self, MessageRow, OrgRow, ProfileRow, RoomRow, DmThreadRow, EventRow};
-use crate::encryption::{Id, get_encryption};
+use crate::encryption::{Id, get_encryption, remove_member_from_org_groups, add_member_to_org_groups, publish_enc_ctrl_op};
 use crate::ops::{decode_cbor, log_ids, MessageOp, OrgOp, OrgUpdateOp, ProfileOp, ReactionOp, RoomOp, RoomDeleteOp, RoomUpdateOp, DmThreadOp, DeleteConversationOp, EventOp, EventUpdateOp, EventDeleteOp, EventRsvpOp, OrgAdminThreadOp};
 use crate::store::get_core;
 use crate::auth::{self, AccessLevel};
@@ -390,6 +390,10 @@ async fn project_room(
             is_archived: false,
             archived_at: None,
             room_cooldown_secs: None,
+            room_type: match op.room_type.as_str() {
+                "voice" => crate::RoomType::Voice,
+                _ => crate::RoomType::Text,
+            },
         },
     )
     .await?;
@@ -696,15 +700,57 @@ async fn project_membership(
                     now,
                 )
                 .await?;
+                
+                // Add member to encryption groups for all rooms in the org
+                if let Ok(pk_bytes) = hex::decode(&op.member_key) {
+                    if let Ok(pk_arr) = <[u8; 32]>::try_from(pk_bytes.as_slice()) {
+                        if let Ok(member_pk) = p2panda_core::PublicKey::from_bytes(&pk_arr) {
+                            // Try to add member to all room groups
+                            match add_member_to_org_groups(&op.org_id, member_pk).await {
+                                Ok(ctrl_messages) => {
+                                    for (room_id, _ctrl_bytes) in ctrl_messages {
+                                        log::info!("[projector] added member to room encryption group: {} for room {}", 
+                                            &op.member_key, room_id);
+                                        // In a full implementation, these ctrl_bytes would be 
+                                        // gossiped to room members
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("[projector] failed to add member to org encryption groups: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         "remove_member" | "kick_member" => {
+            // Convert member_key hex to PublicKey for encryption
+            let member_pk = match hex::decode(&op.member_key) {
+                Ok(bytes) => {
+                    if let Ok(arr) = bytes.try_into() {
+                        p2panda_core::PublicKey::from_bytes(&arr).ok()
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            };
+
+            // Remove from database first
             let query = "DELETE FROM memberships WHERE org_id = ? AND member_key = ?";
             sqlx::query(query)
                 .bind(&op.org_id)
                 .bind(&op.member_key)
                 .execute(pool)
                 .await?;
+            
+            // Remove from encryption groups if we have a valid public key
+            if let Some(pk) = member_pk {
+                if let Err(e) = remove_member_from_org_groups(&op.org_id, pk).await {
+                    log::warn!("[projector] failed to remove member from encryption groups: {}", e);
+                }
+            }
             
             // Add audit log entry
             db::insert_audit_log(
@@ -718,6 +764,18 @@ async fn project_membership(
             ).await.ok(); // Best effort
         }
         "ban_member" => {
+            // Convert member_key hex to PublicKey for encryption
+            let member_pk = match hex::decode(&op.member_key) {
+                Ok(bytes) => {
+                    if let Ok(arr) = bytes.try_into() {
+                        p2panda_core::PublicKey::from_bytes(&arr).ok()
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            };
+
             // Add to ban list
             db::ban_member(pool, &op.org_id, &op.member_key, &moderator_key, now, None).await?;
             // Also remove from memberships
@@ -729,6 +787,13 @@ async fn project_membership(
                 .await?;
             // Bump room epochs so banned user can't decrypt future messages
             db::bump_room_epochs_for_org(pool, &op.org_id).await.ok();
+            
+            // Remove from encryption groups
+            if let Some(pk) = member_pk {
+                if let Err(e) = remove_member_from_org_groups(&op.org_id, pk).await {
+                    log::warn!("[projector] failed to remove banned member from encryption groups: {}", e);
+                }
+            }
             
             db::insert_audit_log(
                 pool,

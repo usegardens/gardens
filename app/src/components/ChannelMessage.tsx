@@ -8,7 +8,7 @@ import { BlobVideo } from './BlobVideo';
 import { getBlob } from '../ffi/gardensCore';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import { MessageText, extractUrls } from './MessageText';
-import { LinkPreview } from './LinkPreview';
+import { LinkPreviewCard } from './LinkPreview';
 
 const AVATAR_COLORS = ['#5865F2', '#57F287', '#FEE75C', '#EB459E', '#ED4245', '#3498DB', '#E67E22'];
 
@@ -93,9 +93,9 @@ function AudioMessage({ blobHash, roomId }: { blobHash: string; roomId: string |
       setPlaying(false);
     } else {
       try {
-        const bytes = await getBlob(blobHash, roomId);
-        const binary = Array.from(bytes).map((b) => String.fromCharCode(b)).join('');
-        const uri = `data:audio/m4a;base64,${btoa(binary)}`;
+        // getBlob returns base64 string directly
+        const base64 = await getBlob(blobHash, roomId);
+        const uri = `data:audio/m4a;base64,${base64}`;
         const player = new AudioRecorderPlayer();
         playerRef.current = player;
         player.addPlayBackListener((e) => {
@@ -137,6 +137,7 @@ interface Props {
   onToggleReaction?: (emoji: string) => void;
   onReply?: () => void;
   onLongPress?: () => void;
+  imageGroup?: Message[];
 }
 
 export function ChannelMessage({
@@ -155,6 +156,7 @@ export function ChannelMessage({
   onToggleReaction,
   onReply,
   onLongPress,
+  imageGroup = [],
 }: Props) {
   const color = avatarColor(message.authorKey);
   const timestamp = new Date(message.timestamp).toLocaleTimeString([], {
@@ -226,19 +228,38 @@ export function ChannelMessage({
                 {isGrouped && <Text style={styles.inlineTimestamp}>{timestamp}</Text>}
               </View>
               {urls.slice(0, 1).map(url => (
-                <LinkPreview key={url} url={url} />
+                <LinkPreviewCard key={url} url={url} />
               ))}
             </>
           );
         })()}
 
+        {/* Single image or image grid */}
         {message.contentType === 'image' && message.blobId && (
-          <BlobImage
-            blobHash={message.blobId}
-            roomId={message.roomId ?? message.dmThreadId ?? null}
-            peerPublicKey={message.authorKey}
-            style={styles.media}
-          />
+          imageGroup.length > 1 ? (
+            <View style={styles.imageGrid}>
+              {imageGroup.filter(img => img.blobId).map((img, idx) => (
+                <BlobImage
+                  key={img.messageId}
+                  blobHash={img.blobId!}
+                  roomId={img.roomId ?? img.dmThreadId ?? null}
+                  peerPublicKey={img.authorKey}
+                  style={[
+                    styles.gridImage,
+                    idx === 0 && styles.gridImageFirst,
+                    idx === imageGroup.filter(i => i.blobId).length - 1 && styles.gridImageLast,
+                  ]}
+                />
+              ))}
+            </View>
+          ) : (
+            <BlobImage
+              blobHash={message.blobId}
+              roomId={message.roomId ?? message.dmThreadId ?? null}
+              peerPublicKey={message.authorKey}
+              style={styles.media}
+            />
+          )
         )}
 
         {message.contentType === 'audio' && message.blobId && (
@@ -399,6 +420,28 @@ inlineTimestamp: {
   replyPreviewText: { color: '#d5c2ae', fontSize: 12, marginTop: 2 },
 
   media: { width: '100%', minHeight: 160, borderRadius: 6, marginTop: 4 },
+  
+  // Image grid styles for Discord-like multi-image display
+  imageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+    marginRight: 40,
+  },
+  gridImage: {
+    width: '48%',
+    aspectRatio: 1,
+    borderRadius: 6,
+  },
+  gridImageFirst: {
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
+  },
+  gridImageLast: {
+    borderBottomLeftRadius: 6,
+    borderBottomRightRadius: 6,
+  },
   edited: { color: '#8d7763', fontSize: 11, fontStyle: 'italic', marginTop: 2 },
 
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },

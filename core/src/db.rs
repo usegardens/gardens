@@ -239,6 +239,17 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
             public_key  TEXT PRIMARY KEY,
             ignored_at  INTEGER NOT NULL
         );
+
+        -- One-time invite codes for orgs (anyone can create, single-use)
+        CREATE TABLE IF NOT EXISTS org_invite_codes (
+            code            TEXT PRIMARY KEY,
+            org_id          TEXT NOT NULL,
+            creator_key     TEXT NOT NULL,
+            access_level    TEXT NOT NULL DEFAULT 'pull',
+            created_at      INTEGER NOT NULL,
+            claimed_by      TEXT,
+            claimed_at      INTEGER
+        );
         "#,
     )
     .execute(pool)
@@ -259,6 +270,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), DbError> {
         "ALTER TABLE rooms ADD COLUMN room_cooldown_secs INTEGER",
         "ALTER TABLE profiles ADD COLUMN email_enabled INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE dm_threads ADD COLUMN is_request INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE rooms ADD COLUMN room_type TEXT NOT NULL DEFAULT 'text'",
     ] {
         let _ = sqlx::query(sql).execute(pool).await;
     }
@@ -408,6 +420,7 @@ pub struct RoomRow {
     pub is_archived: bool,
     pub archived_at: Option<i64>,
     pub room_cooldown_secs: Option<i64>,
+    pub room_type: crate::RoomType,
 }
 
 pub struct EventRow {
@@ -1005,14 +1018,15 @@ pub async fn is_ignored(pool: &SqlitePool, public_key: &str) -> Result<bool, DbE
 
 pub async fn insert_room(pool: &SqlitePool, row: &RoomRow) -> Result<(), DbError> {
     sqlx::query(
-        r#"INSERT INTO rooms (room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO rooms (room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs, room_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(room_id) DO UPDATE SET 
                name = excluded.name,
                enc_key_epoch = excluded.enc_key_epoch,
                is_archived = excluded.is_archived,
                archived_at = excluded.archived_at,
-               room_cooldown_secs = excluded.room_cooldown_secs"#,
+               room_cooldown_secs = excluded.room_cooldown_secs,
+               room_type = excluded.room_type"#,
     )
     .bind(&row.room_id)
     .bind(&row.org_id)
@@ -1023,6 +1037,10 @@ pub async fn insert_room(pool: &SqlitePool, row: &RoomRow) -> Result<(), DbError
     .bind(row.is_archived as i64)
     .bind(row.archived_at)
     .bind(row.room_cooldown_secs)
+    .bind(match row.room_type {
+        crate::RoomType::Text => "text",
+        crate::RoomType::Voice => "voice",
+    })
     .execute(pool)
     .await?;
     Ok(())
@@ -1059,7 +1077,7 @@ pub async fn unarchive_room(pool: &SqlitePool, room_id: &str) -> Result<(), DbEr
 
 pub async fn get_room(pool: &SqlitePool, room_id: &str) -> Result<Option<RoomRow>, DbError> {
     let row = sqlx::query(
-        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs FROM rooms WHERE room_id = ?"
+        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs, room_type FROM rooms WHERE room_id = ?"
     )
     .bind(room_id)
     .fetch_optional(pool)
@@ -1075,14 +1093,18 @@ pub async fn get_room(pool: &SqlitePool, room_id: &str) -> Result<Option<RoomRow
         is_archived: r.get::<i64, _>("is_archived") != 0,
         archived_at: r.get("archived_at"),
         room_cooldown_secs: r.get("room_cooldown_secs"),
+        room_type: match r.get::<&str, _>("room_type") {
+            "voice" => crate::RoomType::Voice,
+            _ => crate::RoomType::Text,
+        },
     }))
 }
 
 pub async fn list_rooms(pool: &SqlitePool, org_id: &str, include_archived: bool) -> Result<Vec<RoomRow>, DbError> {
     let query = if include_archived {
-        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs FROM rooms WHERE org_id = ? ORDER BY created_at ASC"
+        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs, room_type FROM rooms WHERE org_id = ? ORDER BY created_at ASC"
     } else {
-        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs FROM rooms WHERE org_id = ? AND is_archived = 0 ORDER BY created_at ASC"
+        "SELECT room_id, org_id, name, created_by, created_at, enc_key_epoch, is_archived, archived_at, room_cooldown_secs, room_type FROM rooms WHERE org_id = ? AND is_archived = 0 ORDER BY created_at ASC"
     };
 
     let rows = sqlx::query(query)
@@ -1102,6 +1124,10 @@ pub async fn list_rooms(pool: &SqlitePool, org_id: &str, include_archived: bool)
             is_archived: r.get::<i64, _>("is_archived") != 0,
             archived_at: r.get("archived_at"),
             room_cooldown_secs: r.get("room_cooldown_secs"),
+            room_type: match r.get::<&str, _>("room_type") {
+            "voice" => crate::RoomType::Voice,
+            _ => crate::RoomType::Text,
+        },
         })
         .collect())
 }
@@ -2000,4 +2026,92 @@ mod enc_db_tests {
         let missing = load_enc_group_state(&pool, "nonexistent").await.unwrap();
         assert!(missing.is_none());
     }
+}
+
+// ─── One-time Invite Codes ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct OrgInviteCode {
+    pub code: String,
+    pub org_id: String,
+    pub creator_key: String,
+    pub access_level: String,
+    pub created_at: i64,
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<i64>,
+}
+
+pub async fn create_org_invite_code(
+    pool: &SqlitePool,
+    code: &str,
+    org_id: &str,
+    creator_key: &str,
+    access_level: &str,
+    created_at: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"INSERT INTO org_invite_codes (code, org_id, creator_key, access_level, created_at)
+           VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(code)
+    .bind(org_id)
+    .bind(creator_key)
+    .bind(access_level)
+    .bind(created_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_org_invite_code(pool: &SqlitePool, code: &str) -> Result<Option<OrgInviteCode>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT code, org_id, creator_key, access_level, created_at, claimed_by, claimed_at
+           FROM org_invite_codes WHERE code = ?"#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| OrgInviteCode {
+        code: r.get("code"),
+        org_id: r.get("org_id"),
+        creator_key: r.get("creator_key"),
+        access_level: r.get("access_level"),
+        created_at: r.get("created_at"),
+        claimed_by: r.get("claimed_by"),
+        claimed_at: r.get("claimed_at"),
+    }))
+}
+
+pub async fn claim_org_invite_code(
+    pool: &SqlitePool,
+    code: &str,
+    claimed_by: &str,
+    claimed_at: i64,
+) -> Result<Option<OrgInviteCode>, DbError> {
+    // First get the code to return it
+    let invite = get_org_invite_code(pool, code).await?;
+    
+    if invite.is_none() {
+        return Ok(None);
+    }
+    
+    let invite = invite.unwrap();
+    
+    // Check if already claimed
+    if invite.claimed_by.is_some() {
+        return Ok(None);
+    }
+    
+    // Mark as claimed
+    sqlx::query(
+        r#"UPDATE org_invite_codes SET claimed_by = ?, claimed_at = ? WHERE code = ?"#,
+    )
+    .bind(claimed_by)
+    .bind(claimed_at)
+    .bind(code)
+    .execute(pool)
+    .await?;
+    
+    Ok(Some(invite))
 }
